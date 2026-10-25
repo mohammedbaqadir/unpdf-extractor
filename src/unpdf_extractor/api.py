@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from unpdf_core import pipeline
-from unpdf_core.contract import check_contract
-from unpdf_core.errors import UnpdfError
-from unpdf_core.extract import extract_fields
-from unpdf_core.profile import LayoutProfile
-from unpdf_core.profiles import family_profiles
+from . import pipeline
+from .contract import check_contract
+from .errors import UnpdfError
+from .extract import extract_fields
+from .profile import LayoutProfile
+from .profiles import family_profiles
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 _PROJECT_ROOT = PACKAGE_ROOT.parent.parent if PACKAGE_ROOT.parent.name == "src" else None

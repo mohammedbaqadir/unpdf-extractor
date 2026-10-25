@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from unpdf_core.profiles import family_profiles
+from unpdf_extractor.profiles import family_profiles
 
 
 class FamilyTests(unittest.TestCase):

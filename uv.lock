@@ -568,9 +568,9 @@ wheels = [
 ]
 
 [[package]]
-name = "unpdf-core"
+name = "unpdf-extractor"
 version = "0.1.0"
-source = { editable = "../unpdf-core" }
+source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "pdfplumber" },
@@ -587,14 +587,3 @@ requires-dist = [
     { name = "pypdfium2" },
     { name = "scipy" },
 ]
-
-[[package]]
-name = "unpdf-extractor"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "unpdf-core" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "unpdf-core", editable = "../unpdf-core" }]

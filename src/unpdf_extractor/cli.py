@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from unpdf_core.errors import UnpdfError
-from unpdf_core.profiles import all_families, all_profiles, get_profile
-from unpdf_core.version import __version__
+from .errors import UnpdfError
+from .profiles import all_families, all_profiles, get_profile
+from .version import __version__
 
 from .help import color_enabled, help_text, missing_type_text, terminal_width
 from .help.content import topic_names

@@ -1,7 +1,7 @@
 import unittest
 
-from unpdf_core.extract import extract_fields
-from unpdf_core.profile import LayoutProfile
+from unpdf_extractor.extract import extract_fields
+from unpdf_extractor.profile import LayoutProfile
 
 
 def word(text, x, y, width=20, height=10):

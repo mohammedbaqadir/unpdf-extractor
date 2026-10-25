@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from unpdf_core.profiles import all_families
+from ..profiles import all_families
 
 
 @dataclass(frozen=True)

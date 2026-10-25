@@ -15,7 +15,7 @@ uv tool install --editable C:\Users\Mohammed\projects\unpdf\unpdf-extractor
 Profiles are external data. Set:
 
 ```powershell
-$env:UNPDF_PROFILES = 'C:\Users\Mohammed\projects\unpdf\profiles'
+$env:UNPDF_PROFILES = 'C:\Users\Mohammed\projects\unpdf\unpdf-profiler\profiles'
 ```
 
 ## Commands
