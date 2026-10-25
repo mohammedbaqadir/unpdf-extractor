@@ -1,4 +1,4 @@
-"""Public operations behind the unpdf command."""
+"""Public operations behind the unpdf-extractor command."""
 
 from __future__ import annotations
 
