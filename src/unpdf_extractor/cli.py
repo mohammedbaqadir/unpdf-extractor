@@ -6,7 +6,7 @@ import argparse
 import sys
 
 from unpdf_core.errors import UnpdfError
-from unpdf_core.profiles import all_profiles, family_profiles, get_profile
+from unpdf_core.profiles import all_families, all_profiles, get_profile
 from unpdf_core.version import __version__
 
 from .help import color_enabled, help_text, missing_type_text, terminal_width
@@ -70,6 +70,16 @@ def build_parser(profiles) -> Parser:
                 dest="profile",
                 help=argparse.SUPPRESS,
             )
+        profile_names = {profile.name for profile in profiles}
+        for family in all_families():
+            if family not in profile_names:
+                group.add_argument(
+                    f"--{family}",
+                    action="store_const",
+                    const=family,
+                    dest="family",
+                    help=argparse.SUPPRESS,
+                )
         command_parser.add_argument("--db", help=argparse.SUPPRESS)
         command_parser.add_argument("--work", help=argparse.SUPPRESS)
         command_parser.add_argument(
@@ -153,35 +163,36 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     profile_name = getattr(args, "profile", None)
-    if not profile_name:
+    family_name = getattr(args, "family", None)
+    if not profile_name and not family_name:
         style = Style(color_enabled(no_color))
         print(missing_type_text(profiles, style))
         return 1
 
-    profile = get_profile(profile_name)
     from . import api
 
     try:
-        family = family_profiles(profile_name)
-        if len(family) >= 2:
+        if family_name:
             if args.command == "run":
-                summary = api.run_family(profile_name, args.folder, args.db, args.work)
+                summary = api.run_family(family_name, args.folder, args.db, args.work)
             elif args.command == "check":
-                summary = api.check_family(profile_name, args.folder, args.db, args.work)
+                summary = api.check_family(family_name, args.folder, args.db, args.work)
             elif args.command == "rebuild":
-                summary = api.rebuild_family(profile_name, args.folder, args.db, args.work)
+                summary = api.rebuild_family(family_name, args.folder, args.db, args.work)
             else:
                 parser.error(f"unknown command: {args.command}")
                 return 1
-        elif args.command == "run":
-            summary = api.run_folder(profile, args.folder, args.db, args.work)
-        elif args.command == "check":
-            summary = api.check_database(profile, args.folder, args.db, args.work)
-        elif args.command == "rebuild":
-            summary = api.rebuild_database(profile, args.folder, args.db, args.work)
         else:
-            parser.error(f"unknown command: {args.command}")
-            return 1
+            profile = get_profile(profile_name)
+            if args.command == "run":
+                summary = api.run_folder(profile, args.folder, args.db, args.work)
+            elif args.command == "check":
+                summary = api.check_database(profile, args.folder, args.db, args.work)
+            elif args.command == "rebuild":
+                summary = api.rebuild_database(profile, args.folder, args.db, args.work)
+            else:
+                parser.error(f"unknown command: {args.command}")
+                return 1
     except UnpdfError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code

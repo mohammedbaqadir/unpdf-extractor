@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from unpdf_core.profiles import all_families
+
 
 @dataclass(frozen=True)
 class Entry:
@@ -40,10 +42,21 @@ def profile_entries(profiles) -> tuple[Entry, ...]:
     return tuple(Entry(profile.flag, profile.display_name) for profile in profiles)
 
 
+def family_entries() -> tuple[Entry, ...]:
+    return tuple(
+        Entry(f"--{family}", f"{family} (content-routed family)")
+        for family in all_families()
+    )
+
+
 def type_options(profiles) -> tuple[Option, ...]:
     names = ", ".join(profile.name for profile in profiles) or "none discovered"
     options = [Option("--type NAME", f"select a profile; available: {names}")]
     options.extend(Option(profile.flag, f"{profile.display_name} (shortcut)") for profile in profiles)
+    options.extend(
+        Option(f"--{family}", f"{family} family (content-routed)")
+        for family in all_families()
+    )
     return tuple(options)
 
 
@@ -67,7 +80,7 @@ def _db_name(profiles) -> str:
 
 def overview(profiles) -> Page:
     primary = _primary(profiles)
-    entries = profile_entries(profiles)
+    entries = profile_entries(profiles) + family_entries()
     if entries:
         start = (
             Entry(f"unpdf-extractor run {primary} .", "read the PDFs in this folder"),
@@ -231,7 +244,7 @@ def topic_page(name: str, profiles) -> Page | None:
                         "When a profile is approved, its name becomes a CLI flag automatically.",
                     ),
                 ),
-                Section("Discovered", entries=profile_entries(profiles)),
+                Section("Discovered", entries=profile_entries(profiles) + family_entries()),
                 Section(
                     "Create one",
                     body=(
