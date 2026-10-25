@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "unpdf-extractor"
+version = "0.1.0"
+description = "Deterministic profile-driven PDF extraction into SQLite"
+requires-python = ">=3.12"
+dependencies = ["unpdf-core"]
+
+[project.scripts]
+unpdf-extractor = "unpdf_extractor.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/unpdf_extractor"]
+
+[tool.uv.sources]
+unpdf-core = { path = "../unpdf-core", editable = true }
