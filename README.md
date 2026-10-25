@@ -22,7 +22,7 @@ $env:UNPDF_PROFILES = 'C:\Users\Mohammed\projects\unpdf\profiles'
 
 ```powershell
 unpdf-extractor run --fasah C:\docs
-unpdf-extractor run --type fasah-q C:\docs
+unpdf-extractor run --type fasah-import C:\docs
 unpdf-extractor check --fasah C:\docs
 unpdf-extractor rebuild --fasah C:\docs
 ```
