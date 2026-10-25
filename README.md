@@ -2,7 +2,7 @@
 
 Deterministic PDF-to-SQLite extraction using approved profiles.
 
-No LLM or network calls at runtime.
+No LLM or network calls at runtime. Tesseract with `ara` and `eng` data is used for scanned PDFs.
 
 ## Install locally
 
