@@ -99,9 +99,10 @@ def missing_type_text(profiles, style: Style | None = None) -> str:
     if not profiles:
         lines.extend(
             (
-                "  No profiles found in profiles/.",
+                "  No local profiles found.",
                 "",
                 "Try:",
+                f"  {style.teal('unpdf-extractor pull NAME')}",
                 f"  {style.teal('unpdf-profiler build forms --samples .')}",
                 f"  {style.teal('unpdf-profiler approve forms')}",
             )

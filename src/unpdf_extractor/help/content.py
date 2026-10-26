@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..profiles import all_families
+from .. import registry
 
 
 @dataclass(frozen=True)
@@ -50,8 +51,11 @@ def family_entries() -> tuple[Entry, ...]:
 
 
 def type_options(profiles) -> tuple[Option, ...]:
-    names = ", ".join(profile.name for profile in profiles) or "none discovered"
-    options = [Option("--type NAME", f"select a profile; available: {names}")]
+    names = ", ".join(profile.name for profile in profiles) or "none cached"
+    options = [
+        Option("--type NAME", f"select a profile; local: {names}"),
+        Option("--family NAME", "content-routed family; downloads it when not cached"),
+    ]
     options.extend(Option(profile.flag, f"{profile.display_name} (shortcut)") for profile in profiles)
     options.extend(
         Option(f"--{family}", f"{family} family (content-routed)")
@@ -89,6 +93,7 @@ def overview(profiles) -> Page:
         )
     else:
         start = (
+            Entry("unpdf-extractor pull NAME", "download an approved profile from the registry"),
             Entry("unpdf-profiler build forms --samples .", "create the first profile"),
             Entry("unpdf-profiler approve forms", "approve the generated contract"),
         )
@@ -103,13 +108,14 @@ def overview(profiles) -> Page:
                 body=(
                     f"{_db_name(profiles)}  - SQLite database",
                     ".unpdf/<profile>/ - profile snapshot and extraction evidence",
-                    "No document type is built in; profiles come from profiles/<name>/.",
+                    "Profiles come from profiles/<name>/ or the local registry cache.",
                 ),
             ),
             Section(
                 "More help",
                 entries=(
                     Entry("unpdf-extractor help profiles", "how profiles are discovered"),
+                    Entry("unpdf-extractor help registry", "credentials, download, and cache"),
                     Entry("unpdf-profiler help", "build and approve a profile"),
                     Entry("unpdf-extractor help extraction", "how a PDF becomes fields"),
                     Entry("unpdf-extractor help review", "why a field is flagged"),
@@ -119,7 +125,7 @@ def overview(profiles) -> Page:
                 ),
             ),
         ),
-        footer="Runtime is local. No LLM or network call is made.",
+        footer="Extraction is local. The network is used only to download an uncached profile.",
     )
 
 
@@ -198,6 +204,41 @@ def command_page(name: str, profiles) -> Page | None:
             next_steps=(f"unpdf-extractor check {primary} .", "unpdf-extractor help extraction"),
             footer="Exit: 0 clean | 2 review | 1 no database",
         )
+    if name == "pull":
+        return Page(
+            title="unpdf-extractor pull",
+            summary="Download an approved profile from the private registry and cache it.",
+            usage="unpdf-extractor pull NAME [--version VERSION]",
+            sections=(
+                Section(
+                    "What happens",
+                    body=(
+                        "1. Read the registry URL and token from the environment or credentials file.",
+                        "2. Download the profile metadata and JSON.",
+                        "3. Verify the SHA-256 and the profile contract.",
+                        f"4. Store it under {registry.cache_root()}.",
+                    ),
+                ),
+                Section(
+                    "Credentials",
+                    body=(
+                        "Set UNPDF_REGISTRY_URL and UNPDF_REGISTRY_TOKEN, or create "
+                        f"{registry.credentials_path()} with url and token keys.",
+                        "The token is issued by the profiler owner and is shown only once.",
+                    ),
+                ),
+            ),
+            examples=(
+                "unpdf-extractor pull fasah-import",
+                "unpdf-extractor pull fasah-import --version 1.0.0",
+            ),
+            options=(
+                Option("--version VERSION", "pin a version; defaults to the current one"),
+                Option("--no-color", "plain text output"),
+            ),
+            next_steps=("unpdf-extractor run --type fasah-import .", "unpdf-extractor help registry"),
+            footer="Exit: 0 cached | 3 registry, hash, or profile error | 1 bad name or no credentials",
+        )
     if name == "help":
         return Page(
             title="unpdf-extractor help",
@@ -241,20 +282,61 @@ def topic_page(name: str, profiles) -> Page | None:
                     body=(
                         "profiles/<name>/profile.json, relative to the current folder.",
                         "Set UNPDF_PROFILES to use another profile directory.",
+                        f"Registry profiles are cached under {registry.cache_root()} and used offline.",
                         "When a profile is approved, its name becomes a CLI flag automatically.",
                     ),
                 ),
                 Section("Discovered", entries=profile_entries(profiles) + family_entries()),
                 Section(
-                    "Create one",
+                    "Create or download",
                     body=(
+                        "unpdf-extractor pull NAME",
                         "unpdf-profiler build NAME --samples FOLDER",
                         "Review the generated overlay, then:",
                         "unpdf-profiler approve NAME",
                     ),
                 ),
             ),
-            next_steps=("unpdf-profiler help", "unpdf-extractor help extraction"),
+            next_steps=("unpdf-extractor help registry", "unpdf-extractor help extraction"),
+        )
+    if name == "registry":
+        return Page(
+            title="Profile registry",
+            summary="Approved profiles are downloaded on demand and cached for offline use.",
+            sections=(
+                Section(
+                    "Credentials",
+                    body=(
+                        "UNPDF_REGISTRY_URL and UNPDF_REGISTRY_TOKEN are read first.",
+                        f"Or create {registry.credentials_path()} with url and token keys.",
+                        "The token belongs to one person; revoke it without touching anyone else.",
+                        "No URL or token is stored in this package.",
+                    ),
+                ),
+                Section(
+                    "When the network is used",
+                    body=(
+                        "run --type NAME uses a local or cached profile first.",
+                        "An unknown name is downloaded, hash-checked, and cached.",
+                        "run --family NAME downloads the family members when none are cached.",
+                        "Extraction itself never calls the registry.",
+                    ),
+                ),
+                Section(
+                    "Cache",
+                    body=(
+                        f"{registry.cache_root()}/<name>/<version>/profile.json",
+                        "Delete a version folder to force a fresh download.",
+                        "Pinned versions stay available offline.",
+                    ),
+                ),
+            ),
+            examples=(
+                "unpdf-extractor pull fasah-import",
+                "unpdf-extractor run --type fasah-import C:\\docs",
+                "unpdf-extractor run --family fasah C:\\docs",
+            ),
+            next_steps=("unpdf-extractor help profiles", "unpdf-extractor help exit-codes"),
         )
     if name == "extraction":
         return Page(
@@ -387,10 +469,10 @@ def topic_page(name: str, profiles) -> Page | None:
 
 
 def topic_names(profiles) -> tuple[str, ...]:
-    names = ["profiles", "extraction", "review", "contract", "quarantine", "exit-codes"]
+    names = ["profiles", "registry", "extraction", "review", "contract", "quarantine", "exit-codes"]
     names.extend(profile.name for profile in profiles)
     return tuple(names)
 
 
 def all_page_names(profiles) -> tuple[str, ...]:
-    return ("run", "check", "rebuild", "help", *topic_names(profiles))
+    return ("run", "check", "rebuild", "pull", "help", *topic_names(profiles))

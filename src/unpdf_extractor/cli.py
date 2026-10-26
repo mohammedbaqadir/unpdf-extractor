@@ -61,7 +61,8 @@ def build_parser(profiles) -> Parser:
     def add_common(command_parser, topic):
         command_parser.add_argument("folder", nargs="?", default=".", help=argparse.SUPPRESS)
         group = command_parser.add_mutually_exclusive_group()
-        group.add_argument("--type", dest="profile", choices=[p.name for p in profiles])
+        group.add_argument("--type", dest="profile")
+        group.add_argument("--family", dest="family", metavar="NAME")
         for profile in profiles:
             group.add_argument(
                 profile.flag,
@@ -100,6 +101,19 @@ def build_parser(profiles) -> Parser:
     add_common(check_parser, "check")
     rebuild_parser = sub.add_parser("rebuild", add_help=False, help=argparse.SUPPRESS)
     add_common(rebuild_parser, "rebuild")
+
+    pull_parser = sub.add_parser("pull", add_help=False, help=argparse.SUPPRESS)
+    pull_parser.add_argument("profile")
+    pull_parser.add_argument("--version")
+    pull_parser.add_argument("--no-color", action="store_true", default=argparse.SUPPRESS)
+    pull_parser.add_argument(
+        "-h",
+        "--help",
+        action=HelpAction,
+        profiles=profiles,
+        topic="pull",
+        help=argparse.SUPPRESS,
+    )
 
     help_parser = sub.add_parser("help", add_help=False, help=argparse.SUPPRESS)
     help_parser.add_argument("topic", nargs="?", help=argparse.SUPPRESS)
@@ -160,6 +174,19 @@ def main(argv: list[str] | None = None) -> int:
                 version=__version__,
             )
         )
+        return 0
+
+    if args.command == "pull":
+        from . import registry
+
+        try:
+            result = registry.fetch_profile(args.profile, args.version)
+        except UnpdfError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return exc.exit_code
+        print(f"cached {result['name']} {result['version']}")
+        print(f"sha256 {result['sha256']}")
+        print(f"profile {result['path']}")
         return 0
 
     profile_name = getattr(args, "profile", None)
