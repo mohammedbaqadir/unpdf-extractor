@@ -9,12 +9,52 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import UnpdfError
 
 SCHEMA_VERSION = 3
+MAX_PAGES = 100
+MAX_ANCHORS = 200
+MAX_FIELDS = 500
+MAX_REGIONS = 100
+MAX_TOLERANCE = 0.5
+
+
+def _integer(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("expected an integer")
+    return value
+
+
+def _number(value) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("expected a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("expected a finite number")
+    return number
+
+
+def _tokens(value) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("expected a list of tokens")
+    return tuple(
+        token.strip() for token in value if isinstance(token, str) and token.strip()
+    )
+
+
+def _items(data: dict, key: str, limit: int) -> list:
+    value = data.get(key, [])
+    if not isinstance(value, list):
+        raise UnpdfError(f"Profile {key} must be a list.", exit_code=3)
+    if len(value) > limit:
+        raise UnpdfError(
+            f"Profile cannot declare more than {limit} {key}.", exit_code=3
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -118,38 +158,66 @@ class LayoutProfile:
                 f"expected {SCHEMA_VERSION}.",
                 exit_code=3,
             )
-        page = data.get("page") or {}
+        page = data.get("page")
+        if not isinstance(page, dict):
+            raise UnpdfError("Profile page block is incomplete.", exit_code=3)
         try:
-            page_count = int(page["count"])
-            page_width = float(page["width"])
-            page_height = float(page["height"])
-            tolerance = float(page.get("tolerance", 0.02))
+            page_count = _integer(page["count"])
+            page_width = _number(page["width"])
+            page_height = _number(page["height"])
+            tolerance = _number(page.get("tolerance", 0.02))
         except (KeyError, TypeError, ValueError) as exc:
             raise UnpdfError("Profile page block is incomplete.", exit_code=3) from exc
-        if page_count < 1 or page_width <= 0 or page_height <= 0:
-            raise UnpdfError("Profile page values are invalid.", exit_code=3)
+        if not 1 <= page_count <= MAX_PAGES:
+            raise UnpdfError(
+                f"Profile page count must be between 1 and {MAX_PAGES}.", exit_code=3
+            )
+        if page_width <= 0 or page_height <= 0:
+            raise UnpdfError(
+                "Profile page width and height must be positive.", exit_code=3
+            )
+        if not 0 <= tolerance <= MAX_TOLERANCE:
+            raise UnpdfError(
+                f"Profile page tolerance must be between 0 and {MAX_TOLERANCE}.",
+                exit_code=3,
+            )
 
         anchors = []
-        for item in data.get("anchors") or []:
+        anchor_ids = set()
+        for item in _items(data, "anchors", MAX_ANCHORS):
             try:
-                anchors.append(
-                    Anchor(
-                        id=str(item["id"]),
-                        page=int(item["page"]),
-                        box=Box.from_value(item["box"]),
-                        tokens=tuple(str(token) for token in item["tokens"] if str(token).strip()),
-                    )
+                anchor = Anchor(
+                    id=str(item["id"]).strip(),
+                    page=_integer(item["page"]),
+                    box=Box.from_value(item["box"]),
+                    tokens=_tokens(item["tokens"]),
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise UnpdfError(f"Invalid profile anchor: {item!r}", exit_code=3) from exc
+            if not anchor.id or anchor.id in anchor_ids:
+                raise UnpdfError(
+                    f"Duplicate or empty profile anchor id: {anchor.id!r}", exit_code=3
+                )
+            if not 1 <= anchor.page <= page_count:
+                raise UnpdfError(
+                    f"Profile anchor {anchor.id!r} page must be between 1 and {page_count}.",
+                    exit_code=3,
+                )
+            if not anchor.tokens:
+                raise UnpdfError(
+                    f"Profile anchor {anchor.id!r} must declare at least one token.",
+                    exit_code=3,
+                )
+            anchor_ids.add(anchor.id)
+            anchors.append(anchor)
 
         fields = []
-        names = set()
-        for item in data.get("fields") or []:
+        field_names = set()
+        for item in _items(data, "fields", MAX_FIELDS):
             try:
                 field_item = Field(
-                    name=str(item["name"]),
-                    page=int(item["page"]),
+                    name=str(item["name"]).strip(),
+                    page=_integer(item["page"]),
                     box=Box.from_value(item["box"]),
                     kind=str(item.get("kind", "text")),
                     required=bool(item.get("required", False)),
@@ -159,24 +227,41 @@ class LayoutProfile:
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise UnpdfError(f"Invalid profile field: {item!r}", exit_code=3) from exc
-            if not field_item.name or field_item.name in names:
-                raise UnpdfError(f"Duplicate or empty profile field: {field_item.name!r}", exit_code=3)
-            names.add(field_item.name)
+            if not field_item.name or field_item.name in field_names:
+                raise UnpdfError(
+                    f"Duplicate or empty profile field: {field_item.name!r}", exit_code=3
+                )
+            if not 1 <= field_item.page <= page_count:
+                raise UnpdfError(
+                    f"Profile field {field_item.name!r} page must be between 1 and {page_count}.",
+                    exit_code=3,
+                )
+            field_names.add(field_item.name)
             fields.append(field_item)
 
         regions = []
-        for item in data.get("regions") or []:
+        region_ids = set()
+        for item in _items(data, "regions", MAX_REGIONS):
             try:
-                regions.append(
-                    Region(
-                        id=str(item["id"]),
-                        page=int(item["page"]),
-                        box=Box.from_value(item["box"]),
-                        kind=str(item.get("kind", "panel")),
-                    )
+                region = Region(
+                    id=str(item["id"]).strip(),
+                    page=_integer(item["page"]),
+                    box=Box.from_value(item["box"]),
+                    kind=str(item.get("kind", "panel")),
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise UnpdfError(f"Invalid profile region: {item!r}", exit_code=3) from exc
+            if not region.id or region.id in region_ids:
+                raise UnpdfError(
+                    f"Duplicate or empty profile region id: {region.id!r}", exit_code=3
+                )
+            if not 1 <= region.page <= page_count:
+                raise UnpdfError(
+                    f"Profile region {region.id!r} page must be between 1 and {page_count}.",
+                    exit_code=3,
+                )
+            region_ids.add(region.id)
+            regions.append(region)
 
         if not anchors:
             raise UnpdfError("Profile must declare at least one anchor.", exit_code=3)

@@ -166,6 +166,40 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(credentials.token, "unpdf_test")
         self.assertEqual(fetch_profile("demo")["version"], "1.0.0")
 
+    def test_plain_http_registry_url_is_rejected(self):
+        with patch.dict(os.environ, {"UNPDF_REGISTRY_URL": "http://example.com"}):
+            with self.assertRaisesRegex(UnpdfError, "must use HTTPS") as raised:
+                load_credentials()
+        self.assertEqual(raised.exception.exit_code, 1)
+
+    def test_credentials_file_url_is_validated(self):
+        config = self.root / "appdata" / "unpdf"
+        config.mkdir(parents=True)
+        (config / "credentials.json").write_text(
+            json.dumps({"url": "http://example.com", "token": "unpdf_test"}),
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"UNPDF_REGISTRY_URL": "", "UNPDF_REGISTRY_TOKEN": ""}):
+            with self.assertRaisesRegex(UnpdfError, "must use HTTPS"):
+                load_credentials()
+
+    def test_loopback_http_registry_urls_are_allowed(self):
+        for url in (
+            "http://localhost:8765",
+            "http://127.0.0.1:8765",
+            "http://[::1]:8765",
+        ):
+            with self.subTest(url=url), patch.dict(
+                os.environ, {"UNPDF_REGISTRY_URL": url}
+            ):
+                credentials = load_credentials()
+                self.assertEqual(credentials.url, url)
+
+    def test_https_registry_url_is_allowed(self):
+        url = "https://registry.example.com"
+        with patch.dict(os.environ, {"UNPDF_REGISTRY_URL": url}):
+            self.assertEqual(load_credentials().url, url)
+
 
 if __name__ == "__main__":
     unittest.main()

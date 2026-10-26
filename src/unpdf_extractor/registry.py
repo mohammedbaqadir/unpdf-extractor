@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from .errors import UnpdfError
 from .profile import LayoutProfile
@@ -31,6 +31,7 @@ from .version import __version__
 TIMEOUT = 30
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,25 @@ def credentials_path() -> Path:
     return root / "unpdf" / "credentials.json"
 
 
+def _check_registry_url(url: str) -> None:
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+    except ValueError as exc:
+        raise UnpdfError(f"Invalid registry URL: {url!r}", exit_code=1) from exc
+    if not host:
+        raise UnpdfError(f"Invalid registry URL (missing host): {url!r}", exit_code=1)
+    if parts.scheme == "https":
+        return
+    if parts.scheme == "http" and host in _LOCAL_HOSTS:
+        return
+    raise UnpdfError(
+        "Registry URL must use HTTPS. Plain HTTP is only allowed for localhost, "
+        f"127.0.0.1, or [::1]: {url!r}",
+        exit_code=1,
+    )
+
+
 def load_credentials() -> Credentials | None:
     """Return the configured registry credentials, or None when not set up."""
     url = os.environ.get("UNPDF_REGISTRY_URL", "").strip()
@@ -71,6 +91,7 @@ def load_credentials() -> Credentials | None:
         token = token or str(data.get("token") or "").strip()
     if not url or not token:
         return None
+    _check_registry_url(url)
     return Credentials(url.rstrip("/"), token)
 
 

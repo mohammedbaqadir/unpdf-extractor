@@ -48,6 +48,13 @@ def check_contract(
         details.append(f"page {page_no}: {width:.0f}x{height:.0f}pt")
 
     for anchor in profile.anchors:
+        if not 1 <= anchor.page <= len(page_sizes):
+            return ContractResult(
+                False,
+                f"anchor '{anchor.id}' refers to page {anchor.page}, but the document "
+                f"has {len(page_sizes)} page(s)",
+                page=anchor.page,
+            )
         box = anchor.box
         tokens = {norm_token(token) for token in anchor.tokens if norm_token(token)}
         page_width, page_height = page_sizes[anchor.page - 1]
