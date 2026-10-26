@@ -254,6 +254,17 @@ class _FamilyHandle:
     work_name: str = ".unpdf"
 
 
+def _family_or_fail(family: str):
+    members = family_profiles(family)
+    if len(members) < 2:
+        raise UnpdfError(
+            f"Family '{family}' needs at least two approved profiles. "
+            "Pull them with: unpdf-extractor pull NAME, or set registry credentials.",
+            exit_code=1,
+        )
+    return members
+
+
 def _classify_sample(pdf: Path, members) -> tuple[object | None, str]:
     workdir = pipeline.temp_workdir()
     try:
@@ -291,9 +302,7 @@ def run_family(
     db: str | Path | None = None,
     work: str | Path | None = None,
 ) -> Summary:
-    members = family_profiles(family)
-    if len(members) < 2:
-        raise UnpdfError(f"Family '{family}' needs at least two approved profiles.", exit_code=1)
+    members = _family_or_fail(family)
     candidates = [(profile, load_profile(profile)) for profile in members]
     handle = _FamilyHandle(family, f"{family}.db")
     source, db_path, work_root = resolve_paths(handle, folder, db, work)
@@ -366,9 +375,7 @@ def check_family(
     db: str | Path | None = None,
     work: str | Path | None = None,
 ) -> Summary:
-    members = family_profiles(family)
-    if len(members) < 2:
-        raise UnpdfError(f"Family '{family}' needs at least two approved profiles.", exit_code=1)
+    members = _family_or_fail(family)
     total = Summary()
     for profile in members:
         _merge_summary(total, check_database(profile, folder, db, work))
@@ -381,9 +388,7 @@ def rebuild_family(
     db: str | Path | None = None,
     work: str | Path | None = None,
 ) -> Summary:
-    members = family_profiles(family)
-    if len(members) < 2:
-        raise UnpdfError(f"Family '{family}' needs at least two approved profiles.", exit_code=1)
+    members = _family_or_fail(family)
     total = Summary()
     for profile in members:
         _merge_summary(total, rebuild_database(profile, folder, db, work))
