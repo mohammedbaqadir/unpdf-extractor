@@ -103,8 +103,8 @@ def missing_type_text(profiles, style: Style | None = None) -> str:
                 "",
                 "Try:",
                 f"  {style.teal('unpdf-extractor pull NAME')}",
-                f"  {style.teal('unpdf-profiler build forms --samples .')}",
-                f"  {style.teal('unpdf-profiler approve forms')}",
+                f"  {style.teal('unpdf-profiler build NAME --samples .')}",
+                f"  {style.teal('unpdf-profiler approve NAME')}",
             )
         )
         return "\n".join(lines)

@@ -65,6 +65,7 @@ cached at:
 ```
 
 Cached profiles work offline. Delete a version folder to force a fresh download.
+Set `UNPDF_PROFILE_CACHE` to use a different cache folder.
 
 ## Commands
 

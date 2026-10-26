@@ -79,11 +79,11 @@ def common_options(profiles) -> tuple[Option, ...]:
 
 
 def _primary(profiles) -> str:
-    return profiles[0].flag if profiles else "--forms"
+    return profiles[0].flag if profiles else "--type NAME"
 
 
 def _db_name(profiles) -> str:
-    return profiles[0].db_name if profiles else "forms.db"
+    return profiles[0].db_name if profiles else "profile.db"
 
 
 def overview(profiles) -> Page:
@@ -98,8 +98,8 @@ def overview(profiles) -> Page:
     else:
         start = (
             Entry("unpdf-extractor pull NAME", "download an approved profile from the registry"),
-            Entry("unpdf-profiler build forms --samples .", "create the first profile"),
-            Entry("unpdf-profiler approve forms", "approve the generated contract"),
+            Entry("unpdf-profiler build NAME --samples .", "create the first profile"),
+            Entry("unpdf-profiler approve NAME", "approve the generated contract"),
         )
     return Page(
         title="unpdf-extractor",
@@ -120,7 +120,7 @@ def overview(profiles) -> Page:
                 entries=(
                     Entry("unpdf-extractor help profiles", "how profiles are discovered"),
                     Entry("unpdf-extractor help registry", "credentials, download, and cache"),
-                    Entry("unpdf-profiler help", "build and approve a profile"),
+                    Entry("unpdf-profiler help", "build, publish, and manage profiles"),
                     Entry("unpdf-extractor help extraction", "how a PDF becomes fields"),
                     Entry("unpdf-extractor help review", "why a field is flagged"),
                     Entry("unpdf-extractor help contract", "why a document is quarantined"),
@@ -163,8 +163,8 @@ def command_page(name: str, profiles) -> Page | None:
             ),
             examples=(
                 f"unpdf-extractor run {primary} .",
-                f"unpdf-extractor run {primary} D:\\docs\\forms",
-                f"unpdf-extractor run {primary} D:\\docs\\forms --db D:\\db\\forms.db",
+                f"unpdf-extractor run {primary} D:\\docs\\pdfs",
+                f"unpdf-extractor run {primary} D:\\docs\\pdfs --db D:\\db\\profile.db",
             ),
             options=options,
             next_steps=(f"unpdf-extractor check {primary} .", "unpdf-extractor help review"),
