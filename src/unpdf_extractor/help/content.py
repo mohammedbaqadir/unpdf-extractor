@@ -43,15 +43,18 @@ def profile_entries(profiles) -> tuple[Entry, ...]:
     return tuple(Entry(profile.flag, profile.display_name) for profile in profiles)
 
 
-def family_entries() -> tuple[Entry, ...]:
+def family_entries(profiles) -> tuple[Entry, ...]:
+    names = {profile.name for profile in profiles}
     return tuple(
         Entry(f"--{family}", f"{family} (content-routed family)")
         for family in all_families()
+        if family not in names
     )
 
 
 def type_options(profiles) -> tuple[Option, ...]:
     names = ", ".join(profile.name for profile in profiles) or "none cached"
+    profile_names = {profile.name for profile in profiles}
     options = [
         Option("--type NAME", f"select a profile; local: {names}"),
         Option("--family NAME", "content-routed family; downloads it when not cached"),
@@ -60,6 +63,7 @@ def type_options(profiles) -> tuple[Option, ...]:
     options.extend(
         Option(f"--{family}", f"{family} family (content-routed)")
         for family in all_families()
+        if family not in profile_names
     )
     return tuple(options)
 
@@ -84,7 +88,7 @@ def _db_name(profiles) -> str:
 
 def overview(profiles) -> Page:
     primary = _primary(profiles)
-    entries = profile_entries(profiles) + family_entries()
+    entries = profile_entries(profiles) + family_entries(profiles)
     if entries:
         start = (
             Entry(f"unpdf-extractor run {primary} .", "read the PDFs in this folder"),
@@ -286,7 +290,7 @@ def topic_page(name: str, profiles) -> Page | None:
                         "When a profile is approved, its name becomes a CLI flag automatically.",
                     ),
                 ),
-                Section("Discovered", entries=profile_entries(profiles) + family_entries()),
+                Section("Discovered", entries=profile_entries(profiles) + family_entries(profiles)),
                 Section(
                     "Create or download",
                     body=(
