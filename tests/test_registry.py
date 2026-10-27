@@ -117,7 +117,7 @@ class RegistryTests(unittest.TestCase):
     def test_get_profile_falls_back_to_the_registry(self):
         profile = get_profile("demo")
         self.assertEqual(profile.name, "demo")
-        self.assertEqual(profile.profile_path.read_bytes(), self.profile)
+        self.assertEqual(profile.path.read_bytes(), self.profile)
 
     def test_family_names_come_from_the_registry(self):
         self.assertEqual(family_members("demo"), ["demo"])
@@ -175,7 +175,10 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(fetch_profile("demo")["version"], "1.0.0")
 
     def test_plain_http_registry_url_is_rejected(self):
-        with patch.dict(os.environ, {"UNPDF_REGISTRY_URL": "http://example.com"}):
+        with patch.dict(
+            os.environ,
+            {"UNPDF_REGISTRY_URL": "http://example.com", "UNPDF_REGISTRY_TOKEN": "t"},
+        ):
             with self.assertRaisesRegex(UnpdfError, "must use HTTPS") as raised:
                 load_credentials()
         self.assertEqual(raised.exception.exit_code, 1)
@@ -198,15 +201,45 @@ class RegistryTests(unittest.TestCase):
             "http://[::1]:8765",
         ):
             with self.subTest(url=url), patch.dict(
-                os.environ, {"UNPDF_REGISTRY_URL": url}
+                os.environ,
+                {"UNPDF_REGISTRY_URL": url, "UNPDF_REGISTRY_TOKEN": "unpdf_test"},
             ):
                 credentials = load_credentials()
                 self.assertEqual(credentials.url, url)
 
     def test_https_registry_url_is_allowed(self):
         url = "https://registry.example.com"
-        with patch.dict(os.environ, {"UNPDF_REGISTRY_URL": url}):
+        with patch.dict(
+            os.environ, {"UNPDF_REGISTRY_URL": url, "UNPDF_REGISTRY_TOKEN": "t"}
+        ):
             self.assertEqual(load_credentials().url, url)
+
+    def test_half_configured_environment_is_rejected(self):
+        config = self.root / "appdata" / "unpdf"
+        config.mkdir(parents=True)
+        (config / "credentials.json").write_text(
+            json.dumps(
+                {
+                    "url": f"http://127.0.0.1:{self.server.server_port}",
+                    "token": "from_file",
+                }
+            ),
+            encoding="utf-8",
+        )
+        for environment in (
+            {"UNPDF_REGISTRY_URL": "http://127.0.0.1:8765", "UNPDF_REGISTRY_TOKEN": ""},
+            {"UNPDF_REGISTRY_URL": "", "UNPDF_REGISTRY_TOKEN": "env_token"},
+        ):
+            with self.subTest(environment=environment), patch.dict(os.environ, environment):
+                with self.assertRaisesRegex(UnpdfError, "both") as raised:
+                    load_credentials()
+                self.assertEqual(raised.exception.exit_code, 1)
+
+    def test_newest_version_sorts_after_its_prerelease(self):
+        from unpdf_extractor.registry import _version_key
+
+        self.assertGreater(_version_key("1.0.0"), _version_key("1.0.0-rc1"))
+        self.assertGreater(_version_key("1.10.0"), _version_key("1.9.0"))
 
 
 if __name__ == "__main__":

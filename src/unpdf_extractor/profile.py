@@ -1,8 +1,8 @@
 """Profile contract loading and validation.
 
 A profile is data, not code.  It describes the pages a document type is
-expected to have, the labels that prove the document type, and the boxes that hold
-each value.  Runtime extraction only works against an approved profile.
+expected to have, the labels that prove the document type, and the boxes that
+hold each value.  Runtime extraction only works against an approved profile.
 """
 
 from __future__ import annotations
@@ -19,8 +19,10 @@ SCHEMA_VERSION = 3
 MAX_PAGES = 100
 MAX_ANCHORS = 200
 MAX_FIELDS = 500
-MAX_REGIONS = 100
 MAX_TOLERANCE = 0.5
+
+FIELD_KINDS = ("text", "digits", "number", "decimal", "integer", "date")
+FIELD_MODES = ("line", "multi", "all")
 
 
 def _integer(value) -> int:
@@ -41,9 +43,14 @@ def _number(value) -> float:
 def _tokens(value) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         raise ValueError("expected a list of tokens")
-    return tuple(
-        token.strip() for token in value if isinstance(token, str) and token.strip()
-    )
+    tokens = []
+    for token in value:
+        if not isinstance(token, str):
+            raise ValueError("expected text tokens")
+        text = token.strip()
+        if text:
+            tokens.append(text)
+    return tuple(tokens)
 
 
 def _items(data: dict, key: str, limit: int) -> list:
@@ -51,10 +58,31 @@ def _items(data: dict, key: str, limit: int) -> list:
     if not isinstance(value, list):
         raise UnpdfError(f"Profile {key} must be a list.", exit_code=3)
     if len(value) > limit:
-        raise UnpdfError(
-            f"Profile cannot declare more than {limit} {key}.", exit_code=3
-        )
+        raise UnpdfError(f"Profile cannot declare more than {limit} {key}.", exit_code=3)
     return value
+
+
+def _identity(kind: str, value: str, seen: set[str], page: int, page_count: int) -> str:
+    if not value or value in seen:
+        raise UnpdfError(f"Duplicate or empty profile {kind}: {value!r}", exit_code=3)
+    if not 1 <= page <= page_count:
+        raise UnpdfError(
+            f"Profile {kind} {value!r} page must be between 1 and {page_count}.",
+            exit_code=3,
+        )
+    seen.add(value)
+    return value
+
+
+def _choice(value: object, allowed: tuple[str, ...], key: str, name: str) -> str:
+    text = str(value)
+    if text not in allowed:
+        raise UnpdfError(
+            f"Profile field {name!r} has an unknown {key} {text!r}; "
+            f"expected one of: {', '.join(allowed)}.",
+            exit_code=3,
+        )
+    return text
 
 
 @dataclass(frozen=True)
@@ -76,7 +104,12 @@ class Box:
         return cls(left, top, right, bottom)
 
     def points(self, width: float, height: float) -> tuple[float, float, float, float]:
-        return (self.left * width, self.top * height, self.right * width, self.bottom * height)
+        return (
+            self.left * width,
+            self.top * height,
+            self.right * width,
+            self.bottom * height,
+        )
 
     def contains(self, x: float, y: float) -> bool:
         return self.left <= x <= self.right and self.top <= y <= self.bottom
@@ -97,17 +130,7 @@ class Field:
     box: Box
     kind: str = "text"
     required: bool = False
-    label: str = ""
-    region: str = ""
     mode: str = "line"
-
-
-@dataclass(frozen=True)
-class Region:
-    id: str
-    page: int
-    box: Box
-    kind: str = "panel"
 
 
 @dataclass
@@ -121,7 +144,6 @@ class LayoutProfile:
     page_tolerance: float
     anchors: tuple[Anchor, ...]
     fields: tuple[Field, ...]
-    regions: tuple[Region, ...] = ()
     approved: bool = False
     path: Path | None = None
     raw: dict = field(default_factory=dict)
@@ -148,17 +170,10 @@ class LayoutProfile:
     def from_dict(cls, data: dict, path: Path | None = None) -> "LayoutProfile":
         if not isinstance(data, dict):
             raise UnpdfError("Profile must be a JSON object.", exit_code=3)
-        try:
-            schema_version = int(data.get("schema_version"))
-        except (TypeError, ValueError) as exc:
-            raise UnpdfError(
-                f"Unsupported profile schema version {data.get('schema_version')!r}; "
-                f"expected {SCHEMA_VERSION}.",
-                exit_code=3,
-            ) from exc
+        schema_version = data.get("schema_version")
         if schema_version != SCHEMA_VERSION:
             raise UnpdfError(
-                f"Unsupported profile schema version {data.get('schema_version')!r}; "
+                f"Unsupported profile schema version {schema_version!r}; "
                 f"expected {SCHEMA_VERSION}.",
                 exit_code=3,
             )
@@ -177,9 +192,7 @@ class LayoutProfile:
                 f"Profile page count must be between 1 and {MAX_PAGES}.", exit_code=3
             )
         if page_width <= 0 or page_height <= 0:
-            raise UnpdfError(
-                "Profile page width and height must be positive.", exit_code=3
-            )
+            raise UnpdfError("Profile page width and height must be positive.", exit_code=3)
         if not 0 <= tolerance <= MAX_TOLERANCE:
             raise UnpdfError(
                 f"Profile page tolerance must be between 0 and {MAX_TOLERANCE}.",
@@ -187,7 +200,7 @@ class LayoutProfile:
             )
 
         anchors = []
-        anchor_ids = set()
+        anchor_ids: set[str] = set()
         for item in _items(data, "anchors", MAX_ANCHORS):
             try:
                 anchor = Anchor(
@@ -198,74 +211,35 @@ class LayoutProfile:
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise UnpdfError(f"Invalid profile anchor: {item!r}", exit_code=3) from exc
-            if not anchor.id or anchor.id in anchor_ids:
-                raise UnpdfError(
-                    f"Duplicate or empty profile anchor id: {anchor.id!r}", exit_code=3
-                )
-            if not 1 <= anchor.page <= page_count:
-                raise UnpdfError(
-                    f"Profile anchor {anchor.id!r} page must be between 1 and {page_count}.",
-                    exit_code=3,
-                )
+            _identity("anchor", anchor.id, anchor_ids, anchor.page, page_count)
             if not anchor.tokens:
                 raise UnpdfError(
                     f"Profile anchor {anchor.id!r} must declare at least one token.",
                     exit_code=3,
                 )
-            anchor_ids.add(anchor.id)
             anchors.append(anchor)
 
         fields = []
-        field_names = set()
+        field_names: set[str] = set()
         for item in _items(data, "fields", MAX_FIELDS):
             try:
+                name = str(item["name"]).strip()
+                box = item["box"]
+            except (KeyError, TypeError, ValueError) as exc:
+                raise UnpdfError(f"Invalid profile field: {item!r}", exit_code=3) from exc
+            try:
                 field_item = Field(
-                    name=str(item["name"]).strip(),
+                    name=name,
                     page=_integer(item["page"]),
-                    box=Box.from_value(item["box"]),
-                    kind=str(item.get("kind", "text")),
+                    box=Box.from_value(box),
+                    kind=_choice(item.get("kind", "text"), FIELD_KINDS, "kind", name),
                     required=bool(item.get("required", False)),
-                    label=str(item.get("label", "")),
-                    region=str(item.get("region", "")),
-                    mode=str(item.get("mode", "line")),
+                    mode=_choice(item.get("mode", "line"), FIELD_MODES, "mode", name),
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise UnpdfError(f"Invalid profile field: {item!r}", exit_code=3) from exc
-            if not field_item.name or field_item.name in field_names:
-                raise UnpdfError(
-                    f"Duplicate or empty profile field: {field_item.name!r}", exit_code=3
-                )
-            if not 1 <= field_item.page <= page_count:
-                raise UnpdfError(
-                    f"Profile field {field_item.name!r} page must be between 1 and {page_count}.",
-                    exit_code=3,
-                )
-            field_names.add(field_item.name)
+            _identity("field", field_item.name, field_names, field_item.page, page_count)
             fields.append(field_item)
-
-        regions = []
-        region_ids = set()
-        for item in _items(data, "regions", MAX_REGIONS):
-            try:
-                region = Region(
-                    id=str(item["id"]).strip(),
-                    page=_integer(item["page"]),
-                    box=Box.from_value(item["box"]),
-                    kind=str(item.get("kind", "panel")),
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise UnpdfError(f"Invalid profile region: {item!r}", exit_code=3) from exc
-            if not region.id or region.id in region_ids:
-                raise UnpdfError(
-                    f"Duplicate or empty profile region id: {region.id!r}", exit_code=3
-                )
-            if not 1 <= region.page <= page_count:
-                raise UnpdfError(
-                    f"Profile region {region.id!r} page must be between 1 and {page_count}.",
-                    exit_code=3,
-                )
-            region_ids.add(region.id)
-            regions.append(region)
 
         if not anchors:
             raise UnpdfError("Profile must declare at least one anchor.", exit_code=3)
@@ -282,7 +256,6 @@ class LayoutProfile:
             page_tolerance=tolerance,
             anchors=tuple(anchors),
             fields=tuple(fields),
-            regions=tuple(regions),
             approved=bool(data.get("approved", False)),
             path=path,
             raw=data,
@@ -291,6 +264,7 @@ class LayoutProfile:
     def require_approved(self) -> None:
         if not self.approved:
             raise UnpdfError(
-                f"Profile '{self.name}' is not approved. Run `unpdf-profiler approve {self.name}` first.",
+                f"Profile '{self.name}' is not approved. "
+                "Only approved profiles are accepted; see: unpdf-extractor help profiles",
                 exit_code=4,
             )

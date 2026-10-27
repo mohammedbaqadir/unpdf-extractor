@@ -1,16 +1,26 @@
-"""Runtime checks that a PDF is the document type a profile describes."""
+"""Runtime checks that a PDF is the document type a contract describes."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
-from .pipeline import repair_arabic
+from .extract import norm_text, repair_arabic, word_center
 from .profile import LayoutProfile
 
 
 def norm_token(text: str) -> str:
-    return re.sub(r"[^\w]+", "", repair_arabic(text).lower(), flags=re.UNICODE)
+    """Normalize a token the same way the page text was normalized."""
+    return norm_text(repair_arabic(text))
+
+
+def tokens_match(value: str, token: str) -> bool:
+    """Allow OCR to glue or drop a few letters at the edges of a label."""
+    if not value or not token:
+        return False
+    if value == token:
+        return True
+    short, long = sorted((value, token), key=len)
+    return len(short) >= 3 and short in long
 
 
 @dataclass(frozen=True)
@@ -22,31 +32,31 @@ class ContractResult:
 
 
 def check_contract(
-    profile: LayoutProfile,
+    contract: LayoutProfile,
     words: list[dict],
     page_sizes: list[tuple[float, float]],
 ) -> ContractResult:
     """Validate page count, page size, and required label anchors."""
-    if len(page_sizes) != profile.page_count:
+    if len(page_sizes) != contract.page_count:
         return ContractResult(
             False,
-            f"expected {profile.page_count} page(s), found {len(page_sizes)}",
+            f"expected {contract.page_count} page(s), found {len(page_sizes)}",
         )
 
     details = []
     for page_no, (width, height) in enumerate(page_sizes, start=1):
-        width_error = abs(width - profile.page_width) / profile.page_width
-        height_error = abs(height - profile.page_height) / profile.page_height
-        if width_error > profile.page_tolerance or height_error > profile.page_tolerance:
+        width_error = abs(width - contract.page_width) / contract.page_width
+        height_error = abs(height - contract.page_height) / contract.page_height
+        if width_error > contract.page_tolerance or height_error > contract.page_tolerance:
             return ContractResult(
                 False,
                 f"page {page_no} is {width:.0f}x{height:.0f}pt, "
-                f"expected {profile.page_width:.0f}x{profile.page_height:.0f}pt",
+                f"expected {contract.page_width:.0f}x{contract.page_height:.0f}pt",
                 page=page_no,
             )
         details.append(f"page {page_no}: {width:.0f}x{height:.0f}pt")
 
-    for anchor in profile.anchors:
+    for anchor in contract.anchors:
         if not 1 <= anchor.page <= len(page_sizes):
             return ContractResult(
                 False,
@@ -54,21 +64,17 @@ def check_contract(
                 f"has {len(page_sizes)} page(s)",
                 page=anchor.page,
             )
-        box = anchor.box
-        tokens = {norm_token(token) for token in anchor.tokens if norm_token(token)}
         page_width, page_height = page_sizes[anchor.page - 1]
+        tokens = {normed for normed in (norm_token(token) for token in anchor.tokens) if normed}
         found = set()
         for word in words:
             if int(word.get("page", 0)) != anchor.page:
                 continue
-            x = (float(word["x0"]) + float(word["x1"])) / 2 / page_width
-            y = (float(word["top"]) + float(word["bottom"])) / 2 / page_height
-            if not box.contains(x, y):
+            x, y = word_center(word)
+            if not anchor.box.contains(x / page_width, y / page_height):
                 continue
             value = norm_token(str(word.get("text", "")))
-            for token in tokens:
-                if value == token or token in value or value in token:
-                    found.add(token)
+            found.update(token for token in tokens if tokens_match(value, token))
         missing = sorted(tokens - found)
         if missing:
             return ContractResult(

@@ -12,19 +12,20 @@ upscaled too far or OCR'd with sparse-text layout analysis. This module uses:
     dedupe by normalized text + position, then resolve overlapping readings,
     preferring a whole word over split pieces and then higher confidence.
 
-Contract: each word is ``{text, x0, top, x1, bottom, size, page}`` in page
-points with a top-left origin and a 1-based page number.
+Contract: each word is ``{text, x0, top, x1, bottom, page}`` in page points with
+a top-left origin and a 1-based page number.
 """
 
 from __future__ import annotations
 
-import re
 import subprocess
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageOps
 from scipy import ndimage
+
+from .extract import clean, norm_text
 
 OCR_DPI = 300
 OCR_PSM = 3
@@ -34,6 +35,7 @@ OCR_RULE_THRESHOLD = 160
 OCR_RULE_MIN_LEN = 68  # pixels at 300 DPI (~16 pt)
 OCR_RULE_THICKNESS = 3
 OCR_DEDUPE_FRAC = 0.004  # of page width, in pixels
+OCR_TIMEOUT = 180  # seconds per Tesseract pass
 
 
 def _render(doc, page_no: int, dpi: int) -> Image.Image:
@@ -68,9 +70,8 @@ def _clean_variants(image: Image.Image) -> tuple[Image.Image, Image.Image]:
 
 
 def _clean_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
     # Cell rules sometimes stick to a value ("809331527,"); keep the value.
-    return text.strip(",;|").strip()
+    return clean(text).strip(",;|").strip()
 
 
 def _tesseract_words(image_path: Path, psm: int, lang: str) -> list[dict]:
@@ -93,6 +94,7 @@ def _tesseract_words(image_path: Path, psm: int, lang: str) -> list[dict]:
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=OCR_TIMEOUT,
     )
     words = []
     for line in result.stdout.splitlines():
@@ -140,21 +142,17 @@ def _split_token(word: dict) -> list[dict]:
     return out
 
 
-def _norm(text: str) -> str:
-    return re.sub(r"[^\w]+", "", text.lower(), flags=re.UNICODE)
-
-
 def _dedupe(words: list[dict], distance: float) -> list[dict]:
     """Overlapping passes and split tokens rediscover words; keep the best copy."""
     kept: list[dict] = []
     for word in words:
-        key = _norm(word["text"])
+        key = norm_text(word["text"])
         if not key:
             continue
         duplicate = False
         for index, other in enumerate(kept):
             if (
-                _norm(other["text"]) == key
+                norm_text(other["text"]) == key
                 and abs(word["left"] - other["left"]) < distance
                 and abs(word["top"] - other["top"]) < distance
             ):
@@ -175,7 +173,7 @@ def _resolve_overlaps(words: list[dict]) -> list[dict]:
     or a low-confidence misread of the same cell).  Longer text wins over a
     fragment, then confidence decides between equal-length readings.
     """
-    ordered = sorted(words, key=lambda word: (len(_norm(word["text"])), word["conf"]), reverse=True)
+    ordered = sorted(words, key=lambda word: (len(norm_text(word["text"])), word["conf"]), reverse=True)
     kept: list[dict] = []
     for word in ordered:
         left, top = word["left"], word["top"]
@@ -200,8 +198,8 @@ def _resolve_overlaps(words: list[dict]) -> list[dict]:
             kept.append(word)
         else:
             other = kept[conflict]
-            if len(_norm(word["text"])) > len(_norm(other["text"])) or (
-                len(_norm(word["text"])) == len(_norm(other["text"])) and word["conf"] > other["conf"]
+            if len(norm_text(word["text"])) > len(norm_text(other["text"])) or (
+                len(norm_text(word["text"])) == len(norm_text(other["text"])) and word["conf"] > other["conf"]
             ):
                 kept[conflict] = word
     return kept
@@ -213,22 +211,28 @@ def ocr_page_words(doc, page_no: int, page_size: tuple[float, float], workdir: P
     workdir.mkdir(parents=True, exist_ok=True)
 
     image = _render(doc, page_no, OCR_DPI)
-    image_w, image_h = image.size
-    if not image_w or not image_h:
-        return []
+    try:
+        image_w, image_h = image.size
+        if not image_w or not image_h:
+            return []
 
-    clean_gray, clean_binary = _clean_variants(image)
-    sources = [
-        (clean_gray, f"p{page_no}_clean_gray.png"),
-        (clean_binary, f"p{page_no}_clean_bin.png"),
-    ]
-
-    collected: list[dict] = []
-    for variant, name in sources:
-        path = workdir / name
-        variant.save(path)
-        for word in _tesseract_words(path, OCR_PSM, OCR_LANG):
-            collected.extend(_split_token(word))
+        clean_gray, clean_binary = _clean_variants(image)
+        try:
+            sources = [
+                (clean_gray, f"p{page_no}_clean_gray.png"),
+                (clean_binary, f"p{page_no}_clean_bin.png"),
+            ]
+            collected: list[dict] = []
+            for variant, name in sources:
+                path = workdir / name
+                variant.save(path)
+                for word in _tesseract_words(path, OCR_PSM, OCR_LANG):
+                    collected.extend(_split_token(word))
+        finally:
+            clean_gray.close()
+            clean_binary.close()
+    finally:
+        image.close()
 
     distance = max(6.0, image_w * OCR_DEDUPE_FRAC)
     kept = _resolve_overlaps(_dedupe(collected, distance))
@@ -243,15 +247,13 @@ def ocr_page_words(doc, page_no: int, page_size: tuple[float, float], workdir: P
         bottom = min(max((word["top"] + word["height"]) * sy, 0.0), page_h)
         if not (0 <= x0 < x1 <= page_w and 0 <= top < bottom <= page_h):
             continue
-        text = word["text"]
         words.append(
             {
-                "text": text,
+                "text": word["text"],
                 "x0": x0,
                 "top": top,
                 "x1": x1,
                 "bottom": bottom,
-                "size": (x1 - x0) / max(len(text), 1),
                 "page": page_no,
             }
         )

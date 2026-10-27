@@ -1,6 +1,5 @@
 import sqlite3
 import unittest
-from types import SimpleNamespace
 
 from unpdf_extractor import pipeline
 from unpdf_extractor.contract import check_contract
@@ -25,7 +24,6 @@ def profile_data():
             }
         ],
         "fields": [{"name": "number", "page": 1, "box": [0.1, 0.1, 0.4, 0.2]}],
-        "regions": [{"id": "panel", "page": 1, "box": [0.0, 0.0, 0.5, 0.5]}],
     }
 
 
@@ -82,16 +80,27 @@ class ProfileValidationTests(unittest.TestCase):
             lambda data: data["fields"][0].update(box=[0.5, 0.1, 0.4, 0.2])
         )
 
-    def test_region_ids_must_be_unique(self):
-        self.assert_invalid(
-            lambda data: data["regions"].append(dict(data["regions"][0]))
-        )
-
     def test_field_page_must_be_in_range(self):
         self.assert_invalid(lambda data: data["fields"][0].update(page=3))
 
+    def test_field_kind_must_be_known(self):
+        self.assert_invalid(
+            lambda data: data["fields"][0].update(kind="digts")
+        )
+
+    def test_field_mode_must_be_known(self):
+        self.assert_invalid(
+            lambda data: data["fields"][0].update(mode="lines")
+        )
+
+    def test_unknown_keys_are_ignored(self):
+        data = profile_data()
+        data["regions"] = [{"id": "panel", "page": 1, "box": [0.0, 0.0, 0.5, 0.5]}]
+        data["fields"][0]["label"] = "Number"
+        LayoutProfile.from_dict(data)
+
     def test_collection_limits(self):
-        for key, count in (("anchors", 201), ("fields", 501), ("regions", 101)):
+        for key, count in (("anchors", 201), ("fields", 501)):
             with self.subTest(key=key):
                 data = profile_data()
                 data[key] = [
@@ -149,13 +158,13 @@ class ValidationStatusTests(unittest.TestCase):
         try:
             pipeline.ensure_schema(conn)
             doc_id = conn.execute(
-                "INSERT INTO docs (format, file, sha256, added_at, records, ocr) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                ("test", "sample.pdf", "digest", "now", 1, 0),
+                "INSERT INTO docs (format, file, sha256, added_at, rows) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("test", "sample.pdf", "digest", "now", 1),
             ).lastrowid
             pipeline.validate_document(
                 conn,
-                SimpleNamespace(name="test"),
+                "test",
                 contract,
                 doc_id,
                 {"required": ["1"]},

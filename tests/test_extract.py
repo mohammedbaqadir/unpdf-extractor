@@ -26,12 +26,9 @@ def profile_data():
                 "box": [0.1, 0.1, 0.4, 0.2],
                 "kind": "digits",
                 "required": True,
-                "label": "Number",
                 "mode": "line",
             }
         ],
-        "regions": [],
-        "tables": [],
     }
 
 

@@ -1,5 +1,17 @@
 """Help content and rendering."""
 
-from .render import help_text, missing_type_text, terminal_width, color_enabled
+from .render import (
+    color_enabled,
+    help_text,
+    terminal_width,
+    type_choice_text,
+    unknown_topic_text,
+)
 
-__all__ = ["help_text", "missing_type_text", "terminal_width", "color_enabled"]
+__all__ = [
+    "color_enabled",
+    "help_text",
+    "terminal_width",
+    "type_choice_text",
+    "unknown_topic_text",
+]

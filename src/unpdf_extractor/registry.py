@@ -1,14 +1,15 @@
 """Fetch approved profiles from the private registry and cache them locally.
 
-The registry URL and token are never part of the package. They come from the
+The registry URL and token are never part of the package.  They come from the
 environment or from a user credentials file:
 
     %APPDATA%\\unpdf\\credentials.json      (Windows)
     ~/.config/unpdf/credentials.json        (other systems)
 
-The file shape is ``{"url": "https://...", "token": "unpdf_..."}``. Environment
-variables win over the file. Profiles are cached under the user cache folder so
-repeat runs and offline use do not need the network.
+The file shape is ``{"url": "https://...", "token": "unpdf_..."}``.  A URL and
+token always come from the same place, so a token is never sent to a host it was
+not issued for.  Profiles are cached under the user cache folder, so repeat runs
+and offline use do not need the network.
 """
 
 from __future__ import annotations
@@ -88,21 +89,30 @@ def open_no_redirect(request: urllib.request.Request, timeout: int = TIMEOUT):
 
 
 def load_credentials() -> Credentials | None:
-    """Return the configured registry credentials, or None when not set up."""
-    url = os.environ.get("UNPDF_REGISTRY_URL", "").strip()
-    token = os.environ.get("UNPDF_REGISTRY_TOKEN", "").strip()
+    """Return the configured credentials, or None when none are set up."""
+    env_url = os.environ.get("UNPDF_REGISTRY_URL", "").strip()
+    env_token = os.environ.get("UNPDF_REGISTRY_TOKEN", "").strip()
+    if env_url or env_token:
+        if not (env_url and env_token):
+            raise UnpdfError(
+                "Set both UNPDF_REGISTRY_URL and UNPDF_REGISTRY_TOKEN, or neither.",
+                exit_code=1,
+            )
+        return Credentials(secure_url(env_url), env_token)
+
     path = credentials_path()
-    if (not url or not token) and path.is_file():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise UnpdfError(f"Cannot read registry credentials {path}: {exc}", exit_code=3) from exc
-        if not isinstance(data, dict):
-            raise UnpdfError(f"Registry credentials must be a JSON object: {path}", exit_code=3)
-        url = url or str(data.get("url") or "").strip()
-        token = token or str(data.get("token") or "").strip()
-    if not url or not token:
+    if not path.is_file():
         return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise UnpdfError(f"Cannot read registry credentials {path}: {exc}", exit_code=1) from exc
+    if not isinstance(data, dict):
+        raise UnpdfError(f"Registry credentials must be a JSON object: {path}", exit_code=1)
+    url = str(data.get("url") or "").strip()
+    token = str(data.get("token") or "").strip()
+    if not url or not token:
+        raise UnpdfError(f"Registry credentials need both url and token: {path}", exit_code=1)
     return Credentials(secure_url(url), token)
 
 
@@ -126,11 +136,11 @@ def cache_root() -> Path:
     return (root / "unpdf" / "profiles").resolve()
 
 
-def _version_key(value: str):
-    key = []
-    for part in re.split(r"[._-]", value):
-        key.append((0, int(part)) if part.isdigit() else (1, part))
-    return tuple(key)
+def _version_key(value: str) -> tuple:
+    """Sort versions by number; ``1.0.0`` sorts after ``1.0.0-rc1``."""
+    base, _, tag = value.partition("-")
+    numbers = [int(part) if part.isdigit() else 0 for part in re.split(r"[._]", base)]
+    return numbers, 0 if tag else 1, tag
 
 
 def cached_profile_paths() -> dict[str, Path]:
@@ -142,9 +152,7 @@ def cached_profile_paths() -> dict[str, Path]:
     for folder in sorted(root.iterdir()):
         if not folder.is_dir() or not _NAME_RE.fullmatch(folder.name):
             continue
-        versions = [
-            item for item in folder.iterdir() if (item / "profile.json").is_file()
-        ]
+        versions = [item for item in folder.iterdir() if (item / "profile.json").is_file()]
         if not versions:
             continue
         latest = max(versions, key=lambda item: _version_key(item.name))
@@ -152,8 +160,20 @@ def cached_profile_paths() -> dict[str, Path]:
     return found
 
 
-def cached_profile(name: str) -> Path | None:
-    return cached_profile_paths().get(name)
+def _error_message(exc: urllib.error.HTTPError, url: str) -> str:
+    if exc.code in (401, 403):
+        return "Registry rejected the token; check the credentials."
+    if exc.code == 404:
+        return f"Registry has nothing at {url}."
+    if 300 <= exc.code < 400:
+        return "Registry redirected; use its final URL as UNPDF_REGISTRY_URL."
+    try:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        detail = ""
+    if len(detail) > 300:
+        detail = detail[:300] + "..."
+    return f"Registry error {exc.code}: {detail or exc.reason}"
 
 
 def _request(url: str, token: str, *, accept: str) -> bytes:
@@ -166,17 +186,14 @@ def _request(url: str, token: str, *, accept: str) -> bytes:
         },
     )
     try:
-        with open_no_redirect(request, timeout=TIMEOUT) as response:
+        with open_no_redirect(request) as response:
             return response.read()
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace").strip()
-        if len(detail) > 300:
-            detail = detail[:300] + "..."
+        raise UnpdfError(_error_message(exc, url), exit_code=3) from exc
+    except (urllib.error.URLError, OSError) as exc:
         raise UnpdfError(
-            f"Registry rejected the request ({exc.code}): {detail}", exit_code=3
+            f"Registry request failed: {getattr(exc, 'reason', exc)}", exit_code=3
         ) from exc
-    except urllib.error.URLError as exc:
-        raise UnpdfError(f"Registry request failed: {exc.reason}", exit_code=3) from exc
 
 
 def _get_json(url: str, token: str) -> dict:
