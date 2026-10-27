@@ -481,13 +481,15 @@ def summarize(conn: sqlite3.Connection, profile_name: str, documents: int) -> Su
         """,
         (profile_name,),
     ).fetchall()
+    quarantine_rows = pipeline.quarantine_rows(conn, profile_name)
     return Summary(
         documents=documents,
         accepted=int(counts.get("accepted", 0)),
         review=int(counts.get("review", 0)),
         missing=int(counts.get("missing", 0)),
+        quarantined=len(quarantine_rows),
         review_rows=[tuple(row) for row in review_rows],
-        quarantine_rows=pipeline.quarantine_rows(conn, profile_name),
+        quarantine_rows=quarantine_rows,
     )
 
 
