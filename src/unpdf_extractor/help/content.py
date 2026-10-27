@@ -186,7 +186,7 @@ def command_page(name: str, profiles) -> Page | None:
             examples=(f"unpdf-extractor check {primary} .",),
             options=options,
             next_steps=(f"unpdf-extractor run {primary} .", "unpdf-extractor help review"),
-            footer="Exit: 0 clean | 2 review | 1 no database",
+            footer="Exit: 0 clean | 2 review | 3 profile error | 4 unapproved | 1 no database",
         )
     if name == "pull":
         return Page(
