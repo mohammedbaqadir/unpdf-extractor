@@ -38,15 +38,6 @@ class Style:
     def dim(self, text: str) -> str:
         return self._wrap("2", text)
 
-    def green(self, text: str) -> str:
-        return self._wrap("38;5;28", text)
-
-    def amber(self, text: str) -> str:
-        return self._wrap("38;5;130", text)
-
-    def red(self, text: str) -> str:
-        return self._wrap("38;5;124", text)
-
 
 def terminal_width(default: int = 88) -> int:
     try:

@@ -72,8 +72,8 @@ def common_options(profiles) -> tuple[Option, ...]:
     return (
         Option("[folder]", "PDF folder; defaults to the current folder"),
         *type_options(profiles),
-        Option("--db PATH", "database file; defaults to <profile>.db"),
-        Option("--work PATH", "artifact folder; defaults to .unpdf/<profile>"),
+        Option("--db PATH", "database file; defaults to <profile>.db or <family>.db"),
+        Option("--work PATH", "artifact folder; defaults to .unpdf in the PDF folder"),
         Option("--no-color", "plain text output"),
     )
 
@@ -93,7 +93,6 @@ def overview(profiles) -> Page:
         start = (
             Entry(f"unpdf-extractor run {primary} .", "read the PDFs in this folder"),
             Entry(f"unpdf-extractor check {primary} .", "re-check an existing database"),
-            Entry(f"unpdf-extractor rebuild {primary} .", "rebuild generic output from stored fields"),
         )
     else:
         start = (
@@ -111,7 +110,7 @@ def overview(profiles) -> Page:
                 "You get",
                 body=(
                     f"{_db_name(profiles)}  - SQLite database",
-                    ".unpdf/<profile>/ - profile snapshot and extraction evidence",
+                    ".unpdf/ - profile snapshot and extraction evidence",
                     "Profiles come from profiles/<name>/ or the local registry cache.",
                 ),
             ),
@@ -156,7 +155,7 @@ def command_page(name: str, profiles) -> Page | None:
                     "What it leaves behind",
                     body=(
                         f"{_db_name(profiles)}  - the queryable database",
-                        ".unpdf/<profile>/ - profile snapshot and extraction evidence",
+                        ".unpdf/ - profile snapshot and extraction evidence",
                         "The PDFs are never moved or modified.",
                     ),
                 ),
@@ -187,25 +186,6 @@ def command_page(name: str, profiles) -> Page | None:
             examples=(f"unpdf-extractor check {primary} .",),
             options=options,
             next_steps=(f"unpdf-extractor run {primary} .", "unpdf-extractor help review"),
-            footer="Exit: 0 clean | 2 review | 1 no database",
-        )
-    if name == "rebuild":
-        return Page(
-            title="unpdf-extractor rebuild",
-            summary="Rebuild generic output from extracted field rows already stored in the database.",
-            usage=f"unpdf-extractor rebuild {primary} [folder] [options]",
-            sections=(
-                Section(
-                    "When to use it",
-                    body=(
-                        "The generic output or profile metadata changed.",
-                        "The source of truth is extracted_fields; the PDFs are not read again.",
-                    ),
-                ),
-            ),
-            examples=(f"unpdf-extractor rebuild {primary} .",),
-            options=options,
-            next_steps=(f"unpdf-extractor check {primary} .", "unpdf-extractor help extraction"),
             footer="Exit: 0 clean | 2 review | 1 no database",
         )
     if name == "pull":
@@ -268,7 +248,7 @@ def topic_page(name: str, profiles) -> Page | None:
                     "Default files",
                     body=(
                         f"{profile.db_name}  - database",
-                        ".unpdf/<profile>/  - extraction evidence",
+                        ".unpdf/  - extraction evidence",
                     ),
                 ),
                 Section("Checks", body=(checks,)),
@@ -479,4 +459,4 @@ def topic_names(profiles) -> tuple[str, ...]:
 
 
 def all_page_names(profiles) -> tuple[str, ...]:
-    return ("run", "check", "rebuild", "pull", "help", *topic_names(profiles))
+    return ("run", "check", "pull", "help", *topic_names(profiles))

@@ -1,5 +1,8 @@
+import sqlite3
 import unittest
+from types import SimpleNamespace
 
+from unpdf_extractor import pipeline
 from unpdf_extractor.contract import check_contract
 from unpdf_extractor.errors import UnpdfError
 from unpdf_extractor.profile import Anchor, Box, Field, LayoutProfile
@@ -127,6 +130,49 @@ class ProfileValidationTests(unittest.TestCase):
         result = check_contract(profile, [], [(1000, 1000)])
         self.assertFalse(result.ok)
         self.assertIn("page 2", result.reason)
+
+
+class ValidationStatusTests(unittest.TestCase):
+    def test_optional_missing_field_is_reported(self):
+        data = profile_data()
+        data["fields"] = [
+            {
+                "name": "required",
+                "page": 1,
+                "box": [0.1, 0.1, 0.4, 0.2],
+                "required": True,
+            },
+            {"name": "optional", "page": 1, "box": [0.4, 0.1, 0.7, 0.2]},
+        ]
+        contract = LayoutProfile.from_dict(data)
+        conn = sqlite3.connect(":memory:")
+        try:
+            pipeline.ensure_schema(conn)
+            doc_id = conn.execute(
+                "INSERT INTO docs (format, file, sha256, added_at, records, ocr) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("test", "sample.pdf", "digest", "now", 1, 0),
+            ).lastrowid
+            pipeline.validate_document(
+                conn,
+                SimpleNamespace(name="test"),
+                contract,
+                doc_id,
+                {"required": ["1"]},
+            )
+            statuses = dict(
+                conn.execute(
+                    "SELECT field, status FROM _field_status WHERE doc_id = ?",
+                    (doc_id,),
+                ).fetchall()
+            )
+            missing = conn.execute(
+                "SELECT missing FROM docs WHERE doc_id = ?", (doc_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(statuses["optional"], "missing")
+        self.assertEqual(missing, 1)
 
 
 if __name__ == "__main__":

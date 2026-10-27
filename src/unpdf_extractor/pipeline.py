@@ -382,7 +382,7 @@ def validate_document(
     fmt = profile.name
     fields = {field.name: field for field in contract.fields}
     required = {field.name for field in contract.fields if field.required}
-    names = set(values) | required
+    names = set(values) | set(fields)
     statuses = []
     for name in sorted(names):
         found = values.get(name, [])
@@ -411,7 +411,11 @@ def validate_document(
     )
     conn.executemany("INSERT INTO _field_status VALUES (?, ?, ?, ?, ?)", statuses)
     review_count = sum(1 for item in statuses if item[3] == "review")
-    conn.execute("UPDATE docs SET review_count = ? WHERE doc_id = ?", (review_count, doc_id))
+    missing_count = sum(1 for item in statuses if item[3] == "missing")
+    conn.execute(
+        "UPDATE docs SET review_count = ?, missing = ? WHERE doc_id = ?",
+        (review_count, missing_count, doc_id),
+    )
 
 
 # ---------------------------------------------------------------- storage

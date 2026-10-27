@@ -98,8 +98,6 @@ def build_parser(profiles) -> Parser:
     add_common(run_parser, "run")
     check_parser = sub.add_parser("check", add_help=False, help=argparse.SUPPRESS)
     add_common(check_parser, "check")
-    rebuild_parser = sub.add_parser("rebuild", add_help=False, help=argparse.SUPPRESS)
-    add_common(rebuild_parser, "rebuild")
 
     pull_parser = sub.add_parser("pull", add_help=False, help=argparse.SUPPRESS)
     pull_parser.add_argument("profile")
@@ -203,8 +201,6 @@ def main(argv: list[str] | None = None) -> int:
                 summary = api.run_family(family_name, args.folder, args.db, args.work)
             elif args.command == "check":
                 summary = api.check_family(family_name, args.folder, args.db, args.work)
-            elif args.command == "rebuild":
-                summary = api.rebuild_family(family_name, args.folder, args.db, args.work)
             else:
                 parser.error(f"unknown command: {args.command}")
                 return 1
@@ -214,8 +210,6 @@ def main(argv: list[str] | None = None) -> int:
                 summary = api.run_folder(profile, args.folder, args.db, args.work)
             elif args.command == "check":
                 summary = api.check_database(profile, args.folder, args.db, args.work)
-            elif args.command == "rebuild":
-                summary = api.rebuild_database(profile, args.folder, args.db, args.work)
             else:
                 parser.error(f"unknown command: {args.command}")
                 return 1
@@ -223,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code
 
-    if args.command in ("check", "rebuild") and summary.documents == 0:
+    if args.command == "check" and summary.documents == 0:
         print("No documents in the database.", file=sys.stderr)
         return 1
     _print_summary(summary)
@@ -231,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print_summary(summary) -> None:
+    if summary.added or summary.skipped:
+        print(f"run: {summary.added} added, {summary.skipped} skipped")
     print(
         f"\nvalidation: {summary.documents} document(s) | "
         f"{summary.accepted} accepted, {summary.review} review, "

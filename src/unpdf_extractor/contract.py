@@ -18,7 +18,6 @@ class ContractResult:
     ok: bool
     reason: str = ""
     page: int | None = None
-    missing: tuple[str, ...] = ()
     details: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -77,7 +76,6 @@ def check_contract(
                 f"page {anchor.page} is missing anchor '{anchor.id}' "
                 f"({', '.join(missing)})",
                 page=anchor.page,
-                missing=tuple(missing),
                 details=tuple(details),
             )
         details.append(f"anchor {anchor.id}: ok")

@@ -74,7 +74,6 @@ unpdf-extractor run --type fasah-import C:\docs
 unpdf-extractor run --family fasah C:\docs
 unpdf-extractor run --fasah C:\docs
 unpdf-extractor check --family fasah C:\docs
-unpdf-extractor rebuild --family fasah C:\docs
 ```
 
 - `--type NAME` selects one profile. If it is not local or cached, it is

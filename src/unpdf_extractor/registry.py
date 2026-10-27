@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import urllib.error
 import urllib.request
@@ -75,6 +76,17 @@ def _check_registry_url(url: str) -> None:
     )
 
 
+def secure_url(url: str) -> str:
+    """Validate a registry URL and return it without a trailing slash."""
+    _check_registry_url(url)
+    return url.rstrip("/")
+
+
+def open_no_redirect(request: urllib.request.Request, timeout: int = TIMEOUT):
+    """Open a request without forwarding headers to a redirect target."""
+    return _OPENER.open(request, timeout=timeout)
+
+
 def load_credentials() -> Credentials | None:
     """Return the configured registry credentials, or None when not set up."""
     url = os.environ.get("UNPDF_REGISTRY_URL", "").strip()
@@ -91,8 +103,7 @@ def load_credentials() -> Credentials | None:
         token = token or str(data.get("token") or "").strip()
     if not url or not token:
         return None
-    _check_registry_url(url)
-    return Credentials(url.rstrip("/"), token)
+    return Credentials(secure_url(url), token)
 
 
 def require_credentials() -> Credentials:
@@ -155,7 +166,7 @@ def _request(url: str, token: str, *, accept: str) -> bytes:
         },
     )
     try:
-        with _OPENER.open(request, timeout=TIMEOUT) as response:
+        with open_no_redirect(request, timeout=TIMEOUT) as response:
             return response.read()
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace").strip()
@@ -194,11 +205,18 @@ def family_members(family: str) -> list[str]:
     ]
 
 
+def _prune_versions(profile_folder: Path, keep: str) -> None:
+    for item in profile_folder.iterdir():
+        if item.is_dir() and item.name != keep:
+            shutil.rmtree(item, ignore_errors=True)
+
+
 def _cache_bytes(name: str, version: str, body: bytes) -> Path:
     target = cache_root() / name / version / "profile.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(body).hexdigest()
     if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == digest:
+        _prune_versions(target.parent.parent, version)
         return target
     handle, temp_path = tempfile.mkstemp(dir=target.parent, prefix=".profile-", suffix=".json")
     try:
@@ -208,6 +226,7 @@ def _cache_bytes(name: str, version: str, body: bytes) -> Path:
     except BaseException:
         Path(temp_path).unlink(missing_ok=True)
         raise
+    _prune_versions(target.parent.parent, version)
     return target
 
 

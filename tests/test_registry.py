@@ -106,6 +106,14 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(result["path"].parent.parent.name, "demo")
         self.assertTrue(all(headers == "Bearer unpdf_test" for _path, headers in self.seen))
 
+    def test_cache_keeps_only_one_version(self):
+        from unpdf_extractor.registry import _cache_bytes
+
+        _cache_bytes("demo", "1.0.0", b"one")
+        _cache_bytes("demo", "2.0.0", b"two")
+        self.assertFalse((self.root / "cache" / "demo" / "1.0.0").exists())
+        self.assertTrue((self.root / "cache" / "demo" / "2.0.0" / "profile.json").exists())
+
     def test_get_profile_falls_back_to_the_registry(self):
         profile = get_profile("demo")
         self.assertEqual(profile.name, "demo")

@@ -133,10 +133,6 @@ class LayoutProfile:
         payload = json.dumps(self.raw, ensure_ascii=False, sort_keys=True).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()[:16]
 
-    @property
-    def fields_by_name(self) -> dict[str, Field]:
-        return {item.name: item for item in self.fields}
-
     @classmethod
     def load(cls, path: str | Path) -> "LayoutProfile":
         source = Path(path)
@@ -152,7 +148,15 @@ class LayoutProfile:
     def from_dict(cls, data: dict, path: Path | None = None) -> "LayoutProfile":
         if not isinstance(data, dict):
             raise UnpdfError("Profile must be a JSON object.", exit_code=3)
-        if int(data.get("schema_version", 0)) != SCHEMA_VERSION:
+        try:
+            schema_version = int(data.get("schema_version"))
+        except (TypeError, ValueError) as exc:
+            raise UnpdfError(
+                f"Unsupported profile schema version {data.get('schema_version')!r}; "
+                f"expected {SCHEMA_VERSION}.",
+                exit_code=3,
+            ) from exc
+        if schema_version != SCHEMA_VERSION:
             raise UnpdfError(
                 f"Unsupported profile schema version {data.get('schema_version')!r}; "
                 f"expected {SCHEMA_VERSION}.",

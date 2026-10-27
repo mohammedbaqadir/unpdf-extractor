@@ -16,8 +16,7 @@ from pathlib import Path
 from ..errors import UnpdfError
 from .base import DocumentProfile
 
-_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
-_REGISTERED: dict[str, object] = {}
+_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
 class FileProfile(DocumentProfile):
@@ -54,13 +53,6 @@ def profile_dir(name: str) -> Path:
     return profiles_root() / name
 
 
-def register_profile(name: str, factory) -> None:
-    """Register a programmatic profile in addition to file profiles."""
-    if not _NAME_RE.fullmatch(name):
-        raise ValueError(f"Invalid profile name: {name!r}")
-    _REGISTERED[name] = factory
-
-
 def _discover() -> dict[str, object]:
     found: dict[str, object] = {}
     root = profiles_root()
@@ -69,13 +61,10 @@ def _discover() -> dict[str, object]:
             path = folder / "profile.json"
             if _NAME_RE.fullmatch(folder.name) and path.is_file():
                 found[folder.name] = lambda path=path: FileProfile(path)
-    if os.environ.get("UNPDF_PROFILES") is None:
-        from .. import registry
+    from .. import registry
 
-        for name, path in registry.cached_profile_paths().items():
-            found.setdefault(name, lambda path=path, name=name: FileProfile(path, name))
-    for name, factory in _REGISTERED.items():
-        found.setdefault(name, factory)
+    for name, path in registry.cached_profile_paths().items():
+        found.setdefault(name, lambda path=path, name=name: FileProfile(path, name))
     return found
 
 
