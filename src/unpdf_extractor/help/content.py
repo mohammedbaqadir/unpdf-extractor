@@ -442,9 +442,9 @@ def topic_page(name: str, profiles) -> Page | None:
                     "Codes",
                     body=(
                         "0  clean: every field accepted",
-                        "1  nothing to do, or a usage mistake",
+                        "1  nothing to do, or a usage or setup mistake",
                         "2  review needed: at least one field needs a person",
-                        "3  at least one PDF could not be read",
+                        "3  at least one PDF could not be read, or the registry failed",
                         "4  a PDF was quarantined, or the profile is not approved",
                     ),
                 ),

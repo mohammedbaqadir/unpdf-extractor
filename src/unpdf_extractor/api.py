@@ -160,10 +160,9 @@ def check(
     job: Job,
     folder: str | Path = ".",
     db: str | Path | None = None,
-    work: str | Path | None = None,
 ) -> Summary:
     """Re-validate every stored document against the current contracts."""
-    _source, db_path, _work_root = resolve_paths(job, folder, db, work)
+    _source, db_path, _work = resolve_paths(job, folder, db)
     if not db_path.exists():
         raise UnpdfError(f"No database at {db_path}.", exit_code=1)
 
