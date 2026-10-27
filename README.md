@@ -64,8 +64,9 @@ cached at:
 %LOCALAPPDATA%\unpdf\profiles\<name>\<version>\profile.json
 ```
 
-Cached profiles work offline. Delete a version folder to force a fresh download.
-Set `UNPDF_PROFILE_CACHE` to use a different cache folder.
+Cached profiles work offline. Each pull keeps one version per profile; pulling a
+different version replaces the cached one. Set `UNPDF_PROFILE_CACHE` to use a
+different cache folder.
 
 ## Commands
 

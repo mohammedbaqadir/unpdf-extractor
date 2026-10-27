@@ -310,8 +310,8 @@ def topic_page(name: str, profiles) -> Page | None:
                     "Cache",
                     body=(
                         f"{registry.cache_root()}/<name>/<version>/profile.json",
-                        "Delete a version folder to force a fresh download.",
-                        "Pinned versions stay available offline.",
+                        "A pull keeps one version per profile.",
+                        "Pulling another version replaces the cached one.",
                     ),
                 ),
             ),
