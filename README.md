@@ -83,6 +83,11 @@ relative to the current folder, or from the folder in `UNPDF_PROFILES`.
 Profiles downloaded from the registry are cached and need no local folder. Only
 approved profiles are accepted; an unapproved one exits with code 4.
 
+A field may declare an optional `fallback_box` next to its `box`. It is read only
+when the first box yields no value, which covers forms that leave a labelled row
+blank and print the value one row away. The stored `bbox` is the box that produced
+the value, so evidence still points at the words that were actually read.
+
 ## Registry
 
 Provide both credential values through the environment:
