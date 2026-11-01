@@ -357,6 +357,7 @@ def topic_page(name: str, profiles) -> Page | None:
                         "Words whose centre falls inside the field box are selected.",
                         "Lines are grouped inside the box, then read right to left for Arabic.",
                         "The field mode decides one line, every line, or a joined value.",
+                        "A field may declare a fallback box, read only when the first box is empty.",
                     ),
                 ),
             ),

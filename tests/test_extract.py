@@ -43,6 +43,26 @@ class ExtractTests(unittest.TestCase):
         values = extract_fields(profile, [word("12345", 800, 800)], [(1000, 1000)])
         self.assertNotIn("number", values)
 
+    def test_fallback_box_is_read_when_the_first_box_is_empty(self):
+        data = profile_data()
+        data["fields"][0]["fallback_box"] = [0.5, 0.1, 0.8, 0.2]
+        profile = LayoutProfile.from_dict(data)
+        values = extract_fields(profile, [word("778899", 600, 120)], [(1000, 1000)])
+        self.assertEqual(values["number"].value, "778899")
+        self.assertEqual(tuple(values["number"].box), (0.5, 0.1, 0.8, 0.2))
+
+    def test_first_box_wins_over_the_fallback(self):
+        data = profile_data()
+        data["fields"][0]["fallback_box"] = [0.5, 0.1, 0.8, 0.2]
+        profile = LayoutProfile.from_dict(data)
+        values = extract_fields(
+            profile,
+            [word("12345", 120, 120), word("778899", 600, 120)],
+            [(1000, 1000)],
+        )
+        self.assertEqual(values["number"].value, "12345")
+        self.assertEqual(tuple(values["number"].box), (0.1, 0.1, 0.4, 0.2))
+
 
 if __name__ == "__main__":
     unittest.main()

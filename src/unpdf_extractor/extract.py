@@ -255,22 +255,25 @@ def extract_fields(
     page_sizes: list[tuple[float, float]],
     ocr_pages: set[int] | frozenset[int] = frozenset(),
 ) -> dict[str, FieldValue]:
-    """Extract every declared field that has words in its box."""
+    """Extract every declared field that has words in one of its boxes."""
     result: dict[str, FieldValue] = {}
     for field in profile.fields:
         if not 1 <= field.page <= len(page_sizes):
             continue
-        selected = words_in_box(words, field.page, field.box, page_sizes[field.page - 1])
-        value = _value_for(field, selected) if selected else ""
-        if not value:
-            continue
-        result[field.name] = FieldValue(
-            name=field.name,
-            value=value,
-            page=field.page,
-            box=(field.box.left, field.box.top, field.box.right, field.box.bottom),
-            method="ocr" if field.page in ocr_pages else "text",
-        )
+        page_size = page_sizes[field.page - 1]
+        for box in field.boxes:
+            selected = words_in_box(words, field.page, box, page_size)
+            value = _value_for(field, selected) if selected else ""
+            if not value:
+                continue
+            result[field.name] = FieldValue(
+                name=field.name,
+                value=value,
+                page=field.page,
+                box=(box.left, box.top, box.right, box.bottom),
+                method="ocr" if field.page in ocr_pages else "text",
+            )
+            break
     return result
 
 

@@ -80,6 +80,13 @@ class ProfileValidationTests(unittest.TestCase):
             lambda data: data["fields"][0].update(box=[0.5, 0.1, 0.4, 0.2])
         )
 
+    def test_fallback_box_must_be_valid(self):
+        self.assert_invalid(
+            lambda data: data["fields"][0].update(
+                fallback_box=[0.5, 0.1, 0.4, 0.2]
+            )
+        )
+
     def test_field_page_must_be_in_range(self):
         self.assert_invalid(lambda data: data["fields"][0].update(page=3))
 

@@ -131,6 +131,14 @@ class Field:
     kind: str = "text"
     required: bool = False
     mode: str = "line"
+    fallback_box: Box | None = None
+
+    @property
+    def boxes(self) -> tuple[Box, ...]:
+        """The boxes to try in order, ending with the fallback when declared."""
+        if self.fallback_box is None:
+            return (self.box,)
+        return (self.box, self.fallback_box)
 
 
 @dataclass
@@ -235,6 +243,11 @@ class LayoutProfile:
                     kind=_choice(item.get("kind", "text"), FIELD_KINDS, "kind", name),
                     required=bool(item.get("required", False)),
                     mode=_choice(item.get("mode", "line"), FIELD_MODES, "mode", name),
+                    fallback_box=(
+                        Box.from_value(item["fallback_box"])
+                        if item.get("fallback_box") is not None
+                        else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise UnpdfError(f"Invalid profile field: {item!r}", exit_code=3) from exc
