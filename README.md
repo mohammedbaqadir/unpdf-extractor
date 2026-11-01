@@ -88,6 +88,11 @@ when the first box yields no value, which covers forms that leave a labelled row
 blank and print the value one row away. The stored `bbox` is the box that produced
 the value, so evidence still points at the words that were actually read.
 
+A field's `mode` decides how much of its box becomes the value: `line` keeps the
+longest line, `multi` joins every line, and `all` joins them with a separator. A
+value that wraps onto a second line is only complete with `multi` and a box tall
+enough to contain both lines; with `line` the second line is dropped silently.
+
 ## Registry
 
 Provide both credential values through the environment:
