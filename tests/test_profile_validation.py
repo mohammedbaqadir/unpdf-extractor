@@ -100,6 +100,21 @@ class ProfileValidationTests(unittest.TestCase):
             lambda data: data["fields"][0].update(mode="lines")
         )
 
+    def test_removed_field_kind_and_mode_are_rejected(self):
+        for key, value, allowed in (
+            ("kind", "decimal", "text, digits, number, integer, date"),
+            ("mode", "all", "line, multi"),
+        ):
+            with self.subTest(key=key):
+                data = profile_data()
+                data["fields"][0][key] = value
+                with self.assertRaises(UnpdfError) as raised:
+                    LayoutProfile.from_dict(data)
+                message = str(raised.exception)
+                self.assertEqual(raised.exception.exit_code, 3)
+                self.assertIn(f"unknown {key} '{value}'", message)
+                self.assertIn(allowed, message)
+
     def test_unknown_keys_are_ignored(self):
         data = profile_data()
         data["regions"] = [{"id": "panel", "page": 1, "box": [0.0, 0.0, 0.5, 0.5]}]

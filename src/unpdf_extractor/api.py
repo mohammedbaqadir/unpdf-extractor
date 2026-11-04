@@ -19,7 +19,13 @@ from .contract import check_contract
 from .errors import UnpdfError
 from .extract import FieldValue, extract_fields
 from .profile import LayoutProfile
-from .profiles import Profile, family_profiles, get_profile
+from .profiles import (
+    Profile,
+    all_profiles,
+    family_profiles,
+    get_profile,
+    profile_meta,
+)
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 _PROJECT_ROOT = PACKAGE_ROOT.parent.parent if PACKAGE_ROOT.parent.name == "src" else None
@@ -98,6 +104,20 @@ def family_job(family: str) -> Job:
     return Job(family, f"{family}.db", contracts)
 
 
+def auto_job() -> Job:
+    """One job whose contracts are every approved profile on this machine."""
+    candidates = [
+        profile for profile in all_profiles() if profile_meta(profile).get("approved") is True
+    ]
+    if not candidates:
+        raise UnpdfError(
+            "No approved profiles found in profiles/ or the registry cache.", exit_code=1
+        )
+    return Job(
+        "auto", "documents.db", {profile.name: load_contract(profile) for profile in candidates}
+    )
+
+
 def resolve_paths(
     job: Job,
     folder: str | Path = ".",
@@ -105,10 +125,7 @@ def resolve_paths(
     work: str | Path | None = None,
 ) -> tuple[Path, Path, Path]:
     """Return (PDF folder, database, work folder)."""
-    source = Path(folder).expanduser()
-    if not source.is_dir():
-        raise UnpdfError(f"Folder not found: {source}", exit_code=1)
-    source = source.resolve()
+    source = _source_folder(folder)
     db_path = Path(db).expanduser().resolve() if db else source / job.db_name
     work_root = Path(work).expanduser().resolve() if work else db_path.parent / WORK_DIR
     _ensure_external(db_path, "database")
@@ -208,7 +225,7 @@ class _Run:
                 self.summary.failed += 1
                 return
 
-            outcome = _match(page_data, self.job.contracts)
+            outcome = identify(page_data, self.job.contracts)
             if isinstance(outcome, Failure):
                 self._quarantine(pdf, digest, outcome)
             else:
@@ -234,13 +251,15 @@ class _Run:
         words = page_data[0]
         pipeline.write_evidence(self.work_root, pdf, words, match.values)
         doc_id = self.conn.execute(
-            "INSERT INTO docs (format, file, sha256, added_at, rows) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO docs (format, file, sha256, added_at, rows, ocr) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 match.name,
                 pdf.name,
                 digest,
                 datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 len(match.values),
+                1 if page_data[1] else 0,
             ),
         ).lastrowid
         pipeline.insert_fields(self.conn, doc_id, match.values)
@@ -256,7 +275,7 @@ class _Run:
         self.summary.added += 1
 
 
-def _match(
+def identify(
     page_data: pipeline.PageData,
     contracts: dict[str, LayoutProfile],
 ) -> Match | Failure:
@@ -293,6 +312,46 @@ def _match(
         names = ", ".join(match.name for match in matches)
         return Failure(f"matched more than one profile: {names}", details=tuple(reasons))
     return Failure("no profile subtype matched", details=tuple(reasons))
+
+
+def identify_folder(folder: str | Path = ".") -> tuple[int, int, int]:
+    """Print the profile each PDF in the folder would get. Writes nothing.
+
+    Returns ``(matched, unknown, unreadable)`` counts.
+    """
+    job = auto_job()
+    matched = unknown = unreadable = 0
+    for pdf in _pdfs(_source_folder(folder)):
+        workdir = pipeline.temp_workdir()
+        try:
+            try:
+                page_data = pipeline.words_for_pdf(pdf, workdir)
+            except Exception as exc:  # noqa: BLE001 - one bad file must not stop the preview
+                print(f"identify  {pdf.name}: unreadable ({type(exc).__name__}: {exc})")
+                unreadable += 1
+                continue
+            outcome = identify(page_data, job.contracts)
+            if isinstance(outcome, Failure):
+                label = (
+                    "ambiguous"
+                    if outcome.reason.startswith("matched more than one")
+                    else "none"
+                )
+                print(f"identify  {pdf.name}: {label} ({outcome.reason})")
+                unknown += 1
+            else:
+                print(f"identify  {pdf.name}: {outcome.name}")
+                matched += 1
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+    return matched, unknown, unreadable
+
+
+def _source_folder(folder: str | Path) -> Path:
+    source = Path(folder).expanduser()
+    if not source.is_dir():
+        raise UnpdfError(f"Folder not found: {source}", exit_code=1)
+    return source.resolve()
 
 
 def _pdfs(source: Path) -> list[Path]:

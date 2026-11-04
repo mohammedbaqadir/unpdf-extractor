@@ -78,7 +78,7 @@ def _common_options(profiles, *, work: bool = True) -> tuple[Option, ...]:
         Option("[folder]", "PDF folder; defaults to the current folder"),
         Option("--type NAME", f"one profile; available: {_profile_names(profiles)}"),
         Option("--family NAME", f"one content-routed family; available: {families}"),
-        Option("--db PATH", "database file; defaults to <name>.db in the PDF folder"),
+        Option("--db PATH", "database file; defaults to <name>.db, or documents.db for an automatic run"),
     ]
     if work:
         options.append(
@@ -95,6 +95,7 @@ def overview(profiles) -> Page:
             entries=(
                 Entry("run", "read PDFs from a folder into the database"),
                 Entry("check", "re-validate an existing database without the PDFs"),
+                Entry("identify", "preview which profile each PDF would get"),
                 Entry("pull", "download an approved profile from the registry"),
                 Entry("help", "show a topic: unpdf-extractor help TOPIC"),
             ),
@@ -110,7 +111,7 @@ def overview(profiles) -> Page:
             Section(
                 "Output",
                 entries=(
-                    Entry("<name>.db", "SQLite database next to the PDFs"),
+                    Entry("<name>.db", "SQLite database next to the PDFs; an automatic run writes documents.db"),
                     Entry(".unpdf/", "profile snapshot and extraction evidence"),
                 ),
             ),
@@ -128,34 +129,15 @@ def overview(profiles) -> Page:
     )
 
 
-def type_choice_page(profiles) -> Page:
-    sections = []
-    if profiles:
-        sections.append(Section("Profiles", entries=_profile_rows(profiles)))
-    families = _family_rows()
-    if families:
-        sections.append(Section("Families", entries=families))
-    if not sections:
-        sections.append(
-            Section("No profiles found", body=("Download one first:", "unpdf-extractor pull NAME"))
-        )
-    example = _start_example(profiles)
-    sections.append(Section("Example", body=(example,)))
-    return Page(
-        title="Which document type?",
-        summary="Pass one of these with run or check.",
-        sections=tuple(sections),
-    )
-
-
 def command_page(name: str, profiles) -> Page | None:
     if name == "run":
         return Page(
             title="unpdf-extractor run",
-            summary="Read PDFs, extract one profile, validate fields, and write SQLite.",
+            summary="Read PDFs, pick a profile, extract fields, validate them, and write SQLite.",
             usage=(
                 "unpdf-extractor run [folder] --type NAME [options]",
                 "unpdf-extractor run [folder] --family NAME [options]",
+                "unpdf-extractor run [folder] [options]",
             ),
             sections=(
                 Section(
@@ -163,15 +145,17 @@ def command_page(name: str, profiles) -> Page | None:
                     body=(
                         "1. Find *.pdf in the folder (default: the current folder).",
                         "2. Read the text layer, or run local Tesseract OCR on a scan.",
-                        "3. Check page count, page size, and required label anchors.",
-                        "4. Extract the words inside each declared field box.",
-                        "5. Validate each field, write the database, and report review or quarantine.",
+                        "3. Pick the profile: the one you named, or the approved profile whose contract and match rule fit.",
+                        "4. Check page count, page size, and required label anchors.",
+                        "5. Extract the words inside each declared field box.",
+                        "6. Validate each field, write the database, and report review or quarantine.",
                     ),
                 ),
                 Section(
                     "Output",
                     entries=(
                         Entry("<name>.db", "SQLite database; a family writes one database"),
+                        Entry("documents.db", "database for a run with no --type or --family"),
                         Entry(
                             ".unpdf/",
                             "profile snapshot and extraction evidence, next to the database",
@@ -181,9 +165,10 @@ def command_page(name: str, profiles) -> Page | None:
                 Section("", body=("The PDFs are never moved or modified.",)),
             ),
             examples=(
-                "unpdf-extractor run --type bayan .",
-                "unpdf-extractor run D:\\docs --type fasah-import",
-                "unpdf-extractor run --family fasah --db D:\\db\\fasah.db",
+                "unpdf-extractor run --type invoice .",
+                "unpdf-extractor run D:\\docs --type invoice",
+                "unpdf-extractor run --family invoice --db D:\\db\\invoice.db",
+                "unpdf-extractor run C:\\docs",
             ),
             options=_common_options(profiles),
         )
@@ -194,6 +179,7 @@ def command_page(name: str, profiles) -> Page | None:
             usage=(
                 "unpdf-extractor check [folder] --type NAME [options]",
                 "unpdf-extractor check [folder] --family NAME [options]",
+                "unpdf-extractor check [folder] [options]",
             ),
             sections=(
                 Section(
@@ -201,11 +187,42 @@ def command_page(name: str, profiles) -> Page | None:
                     body=(
                         "You changed a profile and want to re-check stored values.",
                         "Only the database is read; the PDFs are not opened and no evidence is written.",
+                        "With no --type or --family, every approved profile is checked.",
                     ),
                 ),
             ),
-            examples=("unpdf-extractor check --type bayan .",),
+            examples=("unpdf-extractor check --type invoice .",),
             options=_common_options(profiles, work=False),
+        )
+    if name == "identify":
+        return Page(
+            title="unpdf-extractor identify",
+            summary="Preview which approved profile each PDF would get. Writes nothing.",
+            usage=("unpdf-extractor identify [folder]",),
+            sections=(
+                Section(
+                    "Output",
+                    body=(
+                        "identify  a.pdf: invoice           one profile matched",
+                        "identify  b.pdf: none (...)         no profile matched",
+                        "identify  c.pdf: ambiguous (...)    more than one profile matched",
+                    ),
+                ),
+                Section(
+                    "Exit codes",
+                    body=(
+                        "0  every PDF matched one profile",
+                        "1  setup mistake, such as no approved profile or no PDFs",
+                        "3  at least one PDF could not be read",
+                        "4  at least one PDF matched no profile, or more than one",
+                    ),
+                ),
+            ),
+            examples=("unpdf-extractor identify C:\\docs",),
+            options=(
+                Option("[folder]", "PDF folder; defaults to the current folder"),
+                Option("--no-color", "plain text output"),
+            ),
         )
     if name == "pull":
         return Page(
@@ -232,11 +249,11 @@ def command_page(name: str, profiles) -> Page | None:
                 ),
             ),
             examples=(
-                "unpdf-extractor pull fasah-import",
-                "unpdf-extractor pull fasah-import --version 1.0.0",
+                "unpdf-extractor pull invoice",
+                "unpdf-extractor pull invoice --version 1.0.0",
             ),
             options=(
-                Option("NAME", "profile to download, for example fasah-import"),
+                Option("NAME", "profile to download, for example invoice"),
                 Option("--version VERSION", "pin a version; defaults to the current one"),
                 Option("--no-color", "plain text output"),
             ),
@@ -245,6 +262,7 @@ def command_page(name: str, profiles) -> Page | None:
         rows = (
             Entry("run", "read PDFs into the database"),
             Entry("check", "re-check an existing database"),
+            Entry("identify", "preview the profile for each PDF"),
             Entry("pull", "download a profile"),
             Entry("help", "this page"),
             *(Entry(topic, summary) for topic, summary in TOPICS),
@@ -292,7 +310,7 @@ def topic_page(name: str, profiles) -> Page | None:
                     ),
                 ),
             ),
-            examples=("unpdf-extractor run --type bayan .", "unpdf-extractor pull fasah-import"),
+            examples=("unpdf-extractor run --type invoice .", "unpdf-extractor pull invoice"),
         )
     if name == "registry":
         return Page(
@@ -327,8 +345,8 @@ def topic_page(name: str, profiles) -> Page | None:
                 ),
             ),
             examples=(
-                "unpdf-extractor pull fasah-import",
-                "unpdf-extractor run --type fasah-import C:\\docs",
+                "unpdf-extractor pull invoice",
+                "unpdf-extractor run --type invoice C:\\docs",
             ),
         )
     if name == "extraction":
@@ -356,7 +374,7 @@ def topic_page(name: str, profiles) -> Page | None:
                     body=(
                         "Words whose centre falls inside the field box are selected.",
                         "Lines are grouped inside the box, then read right to left for Arabic.",
-                        "The field mode decides one line, every line, or a joined value.",
+                        "The field mode keeps the longest line (line), or joins every line with a space (multi).",
                         "A field may declare a fallback box, read only when the first box is empty.",
                     ),
                 ),
@@ -444,9 +462,9 @@ def topic_page(name: str, profiles) -> Page | None:
                     body=(
                         "0  clean: every field accepted",
                         "1  nothing to do, or a usage or setup mistake",
-                        "2  review needed: at least one field needs a person",
+                        "2  review needed: at least one field needs review",
                         "3  at least one PDF could not be read, or the registry failed",
-                        "4  a PDF was quarantined, or the profile is not approved",
+                        "4  a PDF was quarantined, the profile is not approved, or identify found no single match",
                     ),
                 ),
                 Section(
@@ -491,6 +509,7 @@ def topic_names(profiles) -> tuple[str, ...]:
     return (
         "run",
         "check",
+        "identify",
         "pull",
         "help",
         *(name for name, _summary in TOPICS),

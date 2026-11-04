@@ -19,7 +19,6 @@ from .content import (
     overview,
     topic_names,
     topic_page,
-    type_choice_page,
 )
 
 
@@ -80,12 +79,6 @@ def help_text(
     if page is None:
         return None
     return _render(page, style, width, version)
-
-
-def type_choice_text(profiles, *, width: int | None = None, color: bool | None = None) -> str:
-    width = width or terminal_width()
-    style = Style(color_enabled() if color is None else color)
-    return _render(type_choice_page(profiles), style, width, "")
 
 
 def unknown_topic_text(

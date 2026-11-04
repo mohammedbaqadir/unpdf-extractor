@@ -21,8 +21,8 @@ MAX_ANCHORS = 200
 MAX_FIELDS = 500
 MAX_TOLERANCE = 0.5
 
-FIELD_KINDS = ("text", "digits", "number", "decimal", "integer", "date")
-FIELD_MODES = ("line", "multi", "all")
+FIELD_KINDS = ("text", "digits", "number", "integer", "date")
+FIELD_MODES = ("line", "multi")
 
 
 def _integer(value) -> int:

@@ -144,7 +144,7 @@ def check_value(value: str, kind: str) -> str | None:
     if kind == "digits":
         if not re.fullmatch(r"\d+", value):
             return "not digits"
-    elif kind in {"number", "decimal"}:
+    elif kind == "number":
         try:
             float(value.replace(",", ""))
         except ValueError:
@@ -175,6 +175,7 @@ class FieldValue:
     page: int
     box: tuple[float, float, float, float]
     method: str = "text"
+    confidence: float | None = None
 
 
 def words_in_box(
@@ -266,12 +267,19 @@ def extract_fields(
             value = _value_for(field, selected) if selected else ""
             if not value:
                 continue
+            method = "ocr" if field.page in ocr_pages else "text"
+            confidence = None
+            if method == "ocr":
+                scores = [float(word["conf"]) for word in selected if "conf" in word]
+                if scores:
+                    confidence = round(sum(scores) / len(scores), 1)
             result[field.name] = FieldValue(
                 name=field.name,
                 value=value,
                 page=field.page,
                 box=(box.left, box.top, box.right, box.bottom),
-                method="ocr" if field.page in ocr_pages else "text",
+                method=method,
+                confidence=confidence,
             )
             break
     return result
@@ -281,8 +289,6 @@ def _value_for(field: Field, words: list[dict]) -> str:
     lines = group_lines(words)
     if field.mode == "multi":
         return " ".join(text for text in (join_line(line) for line in lines) if text)
-    if field.mode == "all":
-        return " | ".join(text for text in (join_line(line) for line in lines) if text)
     if not lines:
         return ""
     # Most fields are one line.  If the box catches a neighbouring row, the

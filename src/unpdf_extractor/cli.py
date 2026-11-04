@@ -10,7 +10,6 @@ from .help import (
     color_enabled,
     help_text,
     terminal_width,
-    type_choice_text,
     unknown_topic_text,
 )
 from .profiles import all_profiles
@@ -76,12 +75,19 @@ def build_parser(profiles, color: bool) -> Parser:
 
     selection_command(
         "run",
-        "unpdf-extractor run [folder] (--type NAME | --family NAME) [options]",
+        "unpdf-extractor run [folder] [--type NAME | --family NAME] [options]",
     )
     selection_command(
         "check",
-        "unpdf-extractor check [folder] (--type NAME | --family NAME) [options]",
+        "unpdf-extractor check [folder] [--type NAME | --family NAME] [options]",
         work=False,
+    )
+    identify = commands.add_parser(
+        "identify", add_help=False, usage="unpdf-extractor identify [folder]"
+    )
+    identify.add_argument("folder", nargs="?", default=".", metavar="folder")
+    identify.add_argument(
+        "-h", "--help", action=HelpAction, profiles=profiles, color=color, topic="identify"
     )
 
     pull = commands.add_parser(
@@ -136,14 +142,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "pull":
         return _pull(args.profile, args.version)
 
-    if not args.profile and not args.family:
-        print(type_choice_text(profiles, color=color), file=sys.stderr)
-        return 1
-
     from . import api
 
+    if args.command == "identify":
+        try:
+            _matched, unknown, unreadable = api.identify_folder(args.folder)
+        except UnpdfError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return exc.exit_code
+        if unreadable:
+            return 3
+        if unknown:
+            return 4
+        return 0
+
     try:
-        job = api.family_job(args.family) if args.family else api.type_job(args.profile)
+        if args.family:
+            job = api.family_job(args.family)
+        elif args.profile:
+            job = api.type_job(args.profile)
+        else:
+            job = api.auto_job()
         if args.command == "run":
             summary = api.run(job, args.folder, args.db, args.work)
         else:

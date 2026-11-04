@@ -37,6 +37,7 @@ class ExtractTests(unittest.TestCase):
         profile = LayoutProfile.from_dict(profile_data())
         values = extract_fields(profile, [word("12345", 120, 120)], [(1000, 1000)])
         self.assertEqual(values["number"].value, "12345")
+        self.assertIsNone(values["number"].confidence)
 
     def test_ignores_word_outside_box(self):
         profile = LayoutProfile.from_dict(profile_data())

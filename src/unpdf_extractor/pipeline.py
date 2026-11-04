@@ -214,7 +214,15 @@ def insert_fields(conn: sqlite3.Connection, doc_id: int, values: dict) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO extracted_fields (doc_id, field, value, page, bbox, method, confidence) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (doc_id, value.name, value.value, value.page, json.dumps(value.box), value.method, None),
+            (
+                doc_id,
+                value.name,
+                value.value,
+                value.page,
+                json.dumps(value.box),
+                value.method,
+                value.confidence,
+            ),
         )
 
 
