@@ -7,15 +7,18 @@ hold each value.  Runtime extraction only works against an approved profile.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import UnpdfError
 
 SCHEMA_VERSION = 3
+MIN_SUPPORTED_VERSION = 1
 MAX_PAGES = 100
 MAX_ANCHORS = 200
 MAX_FIELDS = 500
@@ -23,6 +26,24 @@ MAX_TOLERANCE = 0.5
 
 FIELD_KINDS = ("text", "digits", "number", "integer", "date")
 FIELD_MODES = ("line", "multi")
+FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+RESERVED_FIELD_NAMES = frozenset({"doc_id", "file", "format", "added_at"})
+
+
+def _migrate_profile(data: dict) -> dict:
+    """Migrate an older profile dict up to SCHEMA_VERSION in memory.
+
+    Each step is a pure dict transform. The file on disk is never rewritten.
+    Bump SCHEMA_VERSION only for a breaking format change, and add the
+    matching step here so older profiles keep loading.
+    """
+    result = copy.deepcopy(data)
+    # No migrations needed yet: versions 1..3 share the current shape.
+    # Future steps look like:
+    #   if version == 3 and SCHEMA_VERSION > 3:
+    #       result.setdefault(...)  # apply the v3 -> v4 change
+    #       result["schema_version"] = 4
+    return result
 
 
 def _integer(value) -> int:
@@ -179,12 +200,25 @@ class LayoutProfile:
         if not isinstance(data, dict):
             raise UnpdfError("Profile must be a JSON object.", exit_code=3)
         schema_version = data.get("schema_version")
-        if schema_version != SCHEMA_VERSION:
+        if (
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or not MIN_SUPPORTED_VERSION <= schema_version <= SCHEMA_VERSION
+        ):
+            if isinstance(schema_version, int) and not isinstance(schema_version, bool):
+                if schema_version > SCHEMA_VERSION:
+                    raise UnpdfError(
+                        f"Profile schema version {schema_version!r} needs a newer "
+                        f"extractor; this one supports up to {SCHEMA_VERSION}.",
+                        exit_code=3,
+                    )
             raise UnpdfError(
                 f"Unsupported profile schema version {schema_version!r}; "
-                f"expected {SCHEMA_VERSION}.",
+                f"expected {MIN_SUPPORTED_VERSION} to {SCHEMA_VERSION}.",
                 exit_code=3,
             )
+        if schema_version < SCHEMA_VERSION:
+            data = _migrate_profile(data)
         page = data.get("page")
         if not isinstance(page, dict):
             raise UnpdfError("Profile page block is incomplete.", exit_code=3)
@@ -235,6 +269,23 @@ class LayoutProfile:
                 box = item["box"]
             except (KeyError, TypeError, ValueError) as exc:
                 raise UnpdfError(f"Invalid profile field: {item!r}", exit_code=3) from exc
+            if not FIELD_NAME_RE.fullmatch(name):
+                raise UnpdfError(
+                    f"Profile field name {name!r} must be lowercase snake_case "
+                    "(^[a-z][a-z0-9_]*$).",
+                    exit_code=3,
+                )
+            if name in RESERVED_FIELD_NAMES:
+                raise UnpdfError(
+                    f"Profile field name {name!r} is reserved (doc_id, file, "
+                    "format, added_at).",
+                    exit_code=3,
+                )
+            if "required" in item and not isinstance(item["required"], bool):
+                raise UnpdfError(
+                    f"Profile field {name!r} required must be a boolean.",
+                    exit_code=3,
+                )
             try:
                 field_item = Field(
                     name=name,
@@ -258,6 +309,39 @@ class LayoutProfile:
             raise UnpdfError("Profile must declare at least one anchor.", exit_code=3)
         if not fields:
             raise UnpdfError("Profile must declare at least one field.", exit_code=3)
+
+        family = data.get("family")
+        if family is not None:
+            if not isinstance(family, str) or not re.fullmatch(
+                r"[a-z][a-z0-9-]*", family.strip()
+            ):
+                raise UnpdfError(
+                    "Profile family must be lowercase letters, digits, and "
+                    "hyphens, starting with a letter.",
+                    exit_code=3,
+                )
+        match = data.get("match")
+        if match is not None:
+            if not isinstance(match, dict):
+                raise UnpdfError("Profile match must be an object.", exit_code=3)
+            match_field = str(match.get("field") or "").strip()
+            if not match_field:
+                raise UnpdfError("Profile match.field is required.", exit_code=3)
+            if match_field not in field_names:
+                raise UnpdfError(
+                    f"Profile match.field {match_field!r} is not a declared field.",
+                    exit_code=3,
+                )
+            contains = match.get("contains_any")
+            if (
+                not isinstance(contains, list)
+                or not contains
+                or any(not str(item).strip() for item in contains)
+            ):
+                raise UnpdfError(
+                    "Profile match.contains_any must contain at least one value.",
+                    exit_code=3,
+                )
 
         return cls(
             name=str(data.get("name") or (path.parent.name if path else "profile")),

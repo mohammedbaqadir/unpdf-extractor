@@ -132,6 +132,87 @@ class CliTests(unittest.TestCase):
         self.assertEqual(value, "123")
         self.assertEqual(ocr, 0)
 
+    def test_ensure_schema_migrates_a_v4_database(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE docs (doc_id INTEGER PRIMARY KEY, format TEXT,
+                    file TEXT, sha256 TEXT UNIQUE, added_at TEXT, rows INTEGER,
+                    missing INTEGER, review_count INTEGER, ocr INTEGER);
+                CREATE TABLE extracted_fields (doc_id INTEGER, field TEXT,
+                    value TEXT, page INTEGER, bbox TEXT, method TEXT,
+                    confidence REAL, PRIMARY KEY (doc_id, field));
+                CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO _meta VALUES ('schema_version', '4');
+                INSERT INTO docs VALUES (1, 'demo', 'a.pdf', 'd1', 'now', 1, 0, 0, 0);
+                INSERT INTO extracted_fields VALUES (1, 'number', '123', 1, '[]', 'text', NULL);
+                """
+            )
+            pipeline.ensure_schema(conn)
+            self.assertEqual(
+                conn.execute("PRAGMA user_version").fetchone()[0], 5
+            )
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(extracted_fields)")}
+            self.assertIn("value_num", cols)
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT value FROM _meta WHERE key='schema_version'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                conn.execute("SELECT value FROM extracted_fields").fetchone()[0], "123"
+            )
+        finally:
+            conn.close()
+
+    def test_ensure_schema_refuses_a_newer_database(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("PRAGMA user_version = 99")
+            from unpdf_extractor.errors import UnpdfError
+
+            with self.assertRaises(UnpdfError) as raised:
+                pipeline.ensure_schema(conn)
+            self.assertIn("newer extractor", str(raised.exception))
+        finally:
+            conn.close()
+
+    def test_run_creates_a_profile_view(self):
+        (self.docs / "sample.pdf").write_bytes(b"%PDF-1.4 fake")
+
+        def word(text, x, y):
+            return {"page": 1, "text": text, "x0": x, "x1": x + 30, "top": y, "bottom": y + 10}
+
+        words = [word("Demo", 50, 50), word("123", 100, 100)]
+        with patch(
+            "unpdf_extractor.pipeline.words_for_pdf",
+            return_value=(words, set(), [(595.0, 842.0)]),
+        ):
+            code, _out, err = self.run_cli("run", str(self.docs), "--type", "demo")
+        self.assertEqual(code, 0, err)
+        conn = sqlite3.connect(self.docs / "demo.db")
+        try:
+            row = conn.execute("SELECT file, number FROM profile_demo").fetchone()
+            self.assertEqual(row, ("sample.pdf", "123"))
+            before = conn.execute("SELECT COUNT(*) FROM extracted_fields").fetchone()[0]
+        finally:
+            conn.close()
+        # Re-running with no fresh PDFs still rebuilds/idempotently keeps views.
+        code, _out, err = self.run_cli("run", str(self.docs), "--type", "demo")
+        self.assertEqual(code, 0, err)
+        conn = sqlite3.connect(self.docs / "demo.db")
+        try:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM extracted_fields").fetchone()[0],
+                before,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM profile_demo").fetchone()[0], 1
+            )
+        finally:
+            conn.close()
+
     def test_run_records_an_ocr_page_and_the_confidence(self):
         (self.docs / "scan.pdf").write_bytes(b"%PDF-1.4 scan")
 

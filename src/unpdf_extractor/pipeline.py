@@ -16,11 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .errors import UnpdfError
-from .extract import check_value, clean
+from .extract import check_value, clean, interpret_value
 from .profile import LayoutProfile
 from .version import __version__
 
-SCHEMA_VERSION = "4"
+DB_VERSION = 5
 
 PageData = tuple[list[dict], set[int], list[tuple[float, float]]]
 
@@ -166,7 +166,41 @@ def _known_hashes(db_path: Path) -> set[str]:
         conn.close()
 
 
+def _migrate_4_to_5(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(extracted_fields)")}
+    if "kind" not in columns:
+        conn.execute("ALTER TABLE extracted_fields ADD COLUMN kind TEXT")
+    if "value_num" not in columns:
+        conn.execute("ALTER TABLE extracted_fields ADD COLUMN value_num NUMERIC")
+    if "value_date" not in columns:
+        conn.execute("ALTER TABLE extracted_fields ADD COLUMN value_date TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_extracted_fields_field_num "
+        "ON extracted_fields(field, value_num)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_extracted_fields_field_date "
+        "ON extracted_fields(field, value_date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_extracted_fields_doc "
+        "ON extracted_fields(doc_id)"
+    )
+    conn.execute("DELETE FROM _meta WHERE key = 'schema_version'")
+
+
+_MIGRATIONS = {4: _migrate_4_to_5}
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current > DB_VERSION:
+        raise UnpdfError(
+            f"This database was created by a newer extractor (schema version "
+            f"{current}); update the extractor. This one supports up to "
+            f"{DB_VERSION}.",
+            exit_code=3,
+        )
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS docs (
@@ -179,8 +213,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (doc_id, field)
         );
         CREATE TABLE IF NOT EXISTS extracted_fields (
-            doc_id INTEGER, field TEXT, value TEXT, page INTEGER, bbox TEXT,
-            method TEXT, confidence REAL,
+            doc_id INTEGER, field TEXT, value TEXT,
+            kind TEXT, value_num NUMERIC, value_date TEXT,
+            page INTEGER, bbox TEXT, method TEXT, confidence REAL,
             PRIMARY KEY (doc_id, field)
         );
         CREATE TABLE IF NOT EXISTS quarantine (
@@ -203,27 +238,139 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE docs ADD COLUMN ocr INTEGER")
     if "review_count" not in columns:
         conn.execute("ALTER TABLE docs ADD COLUMN review_count INTEGER")
+    if current == 0:
+        # Legacy DBs predate PRAGMA user_version; seed from _meta once.
+        row = conn.execute(
+            "SELECT value FROM _meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is not None:
+            try:
+                current = int(row[0])
+            except (TypeError, ValueError):
+                current = 4
+        elif conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='docs'"
+        ).fetchone():
+            current = 4
+        else:
+            current = DB_VERSION
+    while current < DB_VERSION:
+        migration = _MIGRATIONS.get(current)
+        if migration is None:
+            raise UnpdfError(
+                f"Cannot migrate database from schema version {current} to "
+                f"{DB_VERSION}.",
+                exit_code=3,
+            )
+        migration(conn)
+        current += 1
+    conn.execute(f"PRAGMA user_version = {DB_VERSION}")
     conn.execute(
-        "INSERT OR REPLACE INTO _meta (key, value) VALUES ('tool_version', ?), ('schema_version', ?)",
-        (__version__, SCHEMA_VERSION),
+        "CREATE INDEX IF NOT EXISTS idx_extracted_fields_field_num "
+        "ON extracted_fields(field, value_num)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_extracted_fields_field_date "
+        "ON extracted_fields(field, value_date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_extracted_fields_doc "
+        "ON extracted_fields(doc_id)"
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO _meta (key, value) VALUES ('tool_version', ?)",
+        (__version__,),
     )
 
 
 def insert_fields(conn: sqlite3.Connection, doc_id: int, values: dict) -> None:
     for value in values.values():
+        kind = getattr(value, "kind", "text") or "text"
+        num, date = interpret_value(value.value, kind)
         conn.execute(
-            "INSERT OR REPLACE INTO extracted_fields (doc_id, field, value, page, bbox, method, confidence) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO extracted_fields "
+            "(doc_id, field, value, kind, value_num, value_date, page, bbox, method, confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 doc_id,
                 value.name,
                 value.value,
+                kind,
+                num,
+                date,
                 value.page,
                 json.dumps(value.box),
                 value.method,
                 value.confidence,
             ),
         )
+
+
+def backfill_typed_columns(
+    conn: sqlite3.Connection, contracts: dict[str, LayoutProfile]
+) -> None:
+    """Fill kind/value_num/value_date for rows stored before typed columns.
+
+    Idempotent. Rows whose format has no local profile stay NULL until a
+    run with that profile backfills them.
+    """
+    for fmt, contract in contracts.items():
+        for field in contract.fields:
+            rows = conn.execute(
+                "SELECT doc_id, value FROM extracted_fields WHERE field = ? "
+                "AND doc_id IN (SELECT doc_id FROM docs WHERE format = ?)",
+                (field.name, fmt),
+            ).fetchall()
+            for doc_id, raw in rows:
+                num, date = interpret_value(raw or "", field.kind)
+                conn.execute(
+                    "UPDATE extracted_fields SET kind = ?, value_num = ?, "
+                    "value_date = ? WHERE doc_id = ? AND field = ?",
+                    (field.kind, num, date, doc_id, field.name),
+                )
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def ensure_views(conn: sqlite3.Connection, contracts: dict[str, LayoutProfile]) -> None:
+    """Rebuild one ``profile_<name>`` view per contract from the EAV tables.
+
+    One row per document, one column per field, typed by kind. The view is
+    a disposable projection — drop and recreate whenever the profile
+    changes; the EAV rows are the source of truth.
+    """
+    for name, contract in contracts.items():
+        view = f"profile_{name}"
+        conn.execute(f"DROP VIEW IF EXISTS {_quote_ident(view)}")
+        columns = [
+            "d.doc_id AS doc_id",
+            "d.file AS file",
+            "d.added_at AS added_at",
+        ]
+        for field in contract.fields:
+            if field.kind in ("integer", "number"):
+                source = "f.value_num"
+            elif field.kind == "date":
+                source = "f.value_date"
+            else:
+                source = "f.value"
+            # Views can't take ? parameters; field/profile names are
+            # regex-validated, and literals are single-quote escaped.
+            field_lit = "'" + field.name.replace("'", "''") + "'"
+            columns.append(
+                f"MAX(CASE WHEN f.field = {field_lit} THEN {source} END) "
+                f"AS {_quote_ident(field.name)}"
+            )
+        format_lit = "'" + name.replace("'", "''") + "'"
+        sql = (
+            f"CREATE VIEW {_quote_ident(view)} AS SELECT "
+            + ", ".join(columns)
+            + " FROM docs d LEFT JOIN extracted_fields f ON f.doc_id = d.doc_id "
+            f"WHERE d.format = {format_lit} GROUP BY d.doc_id"
+        )
+        conn.execute(sql)
 
 
 def stored_values(conn: sqlite3.Connection, doc_id: int) -> dict[str, list[str]]:

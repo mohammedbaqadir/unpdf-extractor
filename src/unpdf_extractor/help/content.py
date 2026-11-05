@@ -8,13 +8,13 @@ from .. import registry
 from ..profiles import all_families, profile_meta
 
 TOPICS = (
-    ("profiles", "where profiles come from"),
-    ("registry", "credentials, download, and cache"),
-    ("extraction", "how a PDF becomes fields"),
-    ("review", "why a field is flagged"),
-    ("contract", "why a PDF is rejected"),
+    ("profiles", "where profiles come from and which ones are ready"),
+    ("registry", "credentials, downloads, and the local cache"),
+    ("extraction", "how a PDF turns into fields"),
+    ("review", "why a value gets flagged"),
+    ("contract", "why a PDF gets rejected"),
     ("quarantine", "what happens to a rejected PDF"),
-    ("exit-codes", "what 0-4 mean"),
+    ("exit-codes", "what the numbers 0-4 mean"),
 )
 
 
@@ -50,41 +50,90 @@ class Page:
 def _profile_rows(profiles) -> tuple[Entry, ...]:
     rows = []
     for profile in profiles:
-        display = str(profile_meta(profile).get("display_name") or profile.name)
+        data = profile_meta(profile)
+        display = str(data.get("display_name") or profile.name)
+        if not data.get("approved"):
+            display += " (not approved)"
         rows.append(Entry(f"--type {profile.name}", display))
     return tuple(rows)
 
 
 def _family_rows() -> tuple[Entry, ...]:
     return tuple(
-        Entry(f"--family {family}", "route each PDF to the family member that matches")
+        Entry(f"--family {family}", "send each PDF to the family member that fits")
         for family in all_families()
     )
 
 
 def _profile_names(profiles) -> str:
-    return ", ".join(profile.name for profile in profiles) or "none yet"
+    names = [
+        profile.name
+        for profile in profiles
+        if profile_meta(profile).get("approved") is True
+    ]
+    return ", ".join(names) or "none yet"
 
 
 def _start_example(profiles) -> str:
-    if not profiles:
+    approved = [
+        profile for profile in profiles if profile_meta(profile).get("approved") is True
+    ]
+    if not approved:
         return "unpdf-extractor help profiles"
-    return f"unpdf-extractor run --type {profiles[0].name} ."
+    return f"unpdf-extractor run --type {approved[0].name} ."
 
 
-def _common_options(profiles, *, work: bool = True) -> tuple[Option, ...]:
+def _common_options(
+    profiles, *, work: bool = True, action: str = "use"
+) -> tuple[Option, ...]:
     families = ", ".join(all_families()) or "none yet"
+    names = _profile_names(profiles)
+    if action == "check":
+        folder_summary = (
+            "the folder that holds the database; defaults to the one you're in"
+        )
+        type_summary = (
+            "check this profile; can't be combined with --family. "
+            f"available: {names}"
+        )
+        family_summary = (
+            "check the family; can't be combined with --type, and a family needs "
+            f"at least two approved members. available: {families}"
+        )
+        db_summary = (
+            "database to check; defaults to <profile-or-family>.db next to the "
+            "PDFs, or documents.db when you pick no profile"
+        )
+    else:
+        folder_summary = "the folder to read; defaults to the one you're in"
+        type_summary = (
+            "use this profile; can't be combined with --family. "
+            f"available: {names}"
+        )
+        family_summary = (
+            "use the family member that fits each PDF; can't be combined with "
+            "--type, and a family needs at least two approved members. "
+            f"available: {families}"
+        )
+        db_summary = (
+            "where to write the database; defaults to <profile-or-family>.db "
+            "next to the PDFs, or documents.db when you pick no profile"
+        )
     options = [
-        Option("[folder]", "PDF folder; defaults to the current folder"),
-        Option("--type NAME", f"one profile; available: {_profile_names(profiles)}"),
-        Option("--family NAME", f"one content-routed family; available: {families}"),
-        Option("--db PATH", "database file; defaults to <name>.db, or documents.db for an automatic run"),
+        Option("[folder]", folder_summary),
+        Option("--type NAME", type_summary),
+        Option("--family NAME", family_summary),
+        Option("--db PATH", db_summary),
     ]
     if work:
         options.append(
-            Option("--work PATH", "evidence folder; defaults to .unpdf next to the database")
+            Option(
+                "--work PATH",
+                "where to keep the evidence; defaults to .unpdf next to the database",
+            )
         )
-    options.append(Option("--no-color", "plain text output"))
+    options.append(Option("-h, --help", "show this page"))
+    options.append(Option("--no-color", "turn off color"))
     return tuple(options)
 
 
@@ -93,11 +142,11 @@ def overview(profiles) -> Page:
         Section(
             "Commands",
             entries=(
-                Entry("run", "read PDFs from a folder into the database"),
-                Entry("check", "re-validate an existing database without the PDFs"),
-                Entry("identify", "preview which profile each PDF would get"),
-                Entry("pull", "download an approved profile from the registry"),
-                Entry("help", "show a topic: unpdf-extractor help TOPIC"),
+                Entry("run", "read a folder of PDFs into the database"),
+                Entry("check", "re-check a database you already have, without the PDFs"),
+                Entry("identify", "see which profile each PDF would get; writes nothing"),
+                Entry("pull", "download a profile from the registry"),
+                Entry("help", "explain a command or a topic; --help works too"),
             ),
         )
     ]
@@ -111,8 +160,15 @@ def overview(profiles) -> Page:
             Section(
                 "Output",
                 entries=(
-                    Entry("<name>.db", "SQLite database next to the PDFs; an automatic run writes documents.db"),
-                    Entry(".unpdf/", "profile snapshot and extraction evidence"),
+                    Entry("<name>.db", "one database per profile or family"),
+                    Entry(
+                        "documents.db",
+                        "what you get when you pass no --type or --family",
+                    ),
+                    Entry(
+                        ".unpdf/",
+                        "the profile, the words, and the fields; saved next to the database",
+                    ),
                 ),
             ),
             Section(
@@ -124,7 +180,11 @@ def overview(profiles) -> Page:
     )
     return Page(
         title="unpdf-extractor",
-        summary="Read PDFs into a validation-checked SQLite database using approved profiles.",
+        summary=(
+            "This reads PDFs from a folder and puts the fields you care about into a "
+            "SQLite database. It checks each value as it goes, so you can see what "
+            "passed, what needs a look, and what it couldn't use."
+        ),
         sections=tuple(sections),
     )
 
@@ -133,7 +193,10 @@ def command_page(name: str, profiles) -> Page | None:
     if name == "run":
         return Page(
             title="unpdf-extractor run",
-            summary="Read PDFs, pick a profile, extract fields, validate them, and write SQLite.",
+            summary=(
+                "Reads every PDF in a folder, picks the profile that fits, pulls out "
+                "the fields, checks them, and writes the results to a database."
+            ),
             usage=(
                 "unpdf-extractor run [folder] --type NAME [options]",
                 "unpdf-extractor run [folder] --family NAME [options]",
@@ -143,26 +206,54 @@ def command_page(name: str, profiles) -> Page | None:
                 Section(
                     "What happens",
                     body=(
-                        "1. Find *.pdf in the folder (default: the current folder).",
-                        "2. Read the text layer, or run local Tesseract OCR on a scan.",
-                        "3. Pick the profile: the one you named, or the approved profile whose contract and match rule fit.",
-                        "4. Check page count, page size, and required label anchors.",
-                        "5. Extract the words inside each declared field box.",
-                        "6. Validate each field, write the database, and report review or quarantine.",
+                        (
+                            "1. It looks for *.pdf in the folder you name. If you "
+                            "don't name one, it uses the folder you're in."
+                        ),
+                        (
+                            "2. It reads the text layer on each page. If a page has "
+                            "no usable text, it runs Tesseract locally, in Arabic and "
+                            "English."
+                        ),
+                        (
+                            "3. It picks the profile. With --type, it uses that one. "
+                            "With --family, it picks the family member that fits. "
+                            "With neither, it tries every approved profile on this "
+                            "machine."
+                        ),
+                        (
+                            "4. It checks the page count, the page size, and every "
+                            "label anchor. The profile's match rule still has to "
+                            "hold, even when you named the profile."
+                        ),
+                        (
+                            "5. It reads the words inside each field box the profile "
+                            "declares."
+                        ),
+                        (
+                            "6. It checks each value, writes the database, and tells "
+                            "you what needs a look and what it couldn't use."
+                        ),
                     ),
                 ),
                 Section(
                     "Output",
                     entries=(
-                        Entry("<name>.db", "SQLite database; a family writes one database"),
-                        Entry("documents.db", "database for a run with no --type or --family"),
+                        Entry("<name>.db", "one database per profile or family"),
+                        Entry("documents.db", "what you get without --type or --family"),
                         Entry(
                             ".unpdf/",
-                            "profile snapshot and extraction evidence, next to the database",
+                            "the profile, the words, and the fields; saved next to the database",
                         ),
                     ),
                 ),
-                Section("", body=("The PDFs are never moved or modified.",)),
+                Section(
+                    "",
+                    body=(
+                        "",
+                        "The PDFs themselves are never moved or changed.",
+                    ),
+                ),
             ),
             examples=(
                 "unpdf-extractor run --type invoice .",
@@ -175,7 +266,10 @@ def command_page(name: str, profiles) -> Page | None:
     if name == "check":
         return Page(
             title="unpdf-extractor check",
-            summary="Re-run field rules against an existing database without reading the PDFs.",
+            summary=(
+                "Re-checks the values already in a database against the current "
+                "profiles. It never opens the PDFs."
+            ),
             usage=(
                 "unpdf-extractor check [folder] --type NAME [options]",
                 "unpdf-extractor check [folder] --family NAME [options]",
@@ -185,66 +279,82 @@ def command_page(name: str, profiles) -> Page | None:
                 Section(
                     "Use this when",
                     body=(
-                        "You changed a profile and want to re-check stored values.",
-                        "Only the database is read; the PDFs are not opened and no evidence is written.",
-                        "With no --type or --family, every approved profile is checked.",
+                        "You changed a profile and want to see how the stored values hold up.",
+                        "Only the database is read. The PDFs aren't opened, and no evidence is written.",
+                        "With no --type or --family, it checks every approved profile against documents.db.",
                     ),
                 ),
             ),
             examples=("unpdf-extractor check --type invoice .",),
-            options=_common_options(profiles, work=False),
+            options=_common_options(profiles, work=False, action="check"),
         )
     if name == "identify":
         return Page(
             title="unpdf-extractor identify",
-            summary="Preview which approved profile each PDF would get. Writes nothing.",
+            summary="Shows which approved profile each PDF would get. It writes nothing.",
             usage=("unpdf-extractor identify [folder]",),
             sections=(
                 Section(
-                    "Output",
+                    "What it does",
                     body=(
-                        "identify  a.pdf: invoice           one profile matched",
-                        "identify  b.pdf: none (...)         no profile matched",
-                        "identify  c.pdf: ambiguous (...)    more than one profile matched",
+                        (
+                            "It tries every approved profile on this machine. "
+                            "There's no --type or --family here."
+                        ),
+                        "It reads the PDFs, so a scan needs Tesseract too.",
+                        "For each PDF, it prints one line:",
+                        "",
+                        "  identify  a.pdf: invoice           one profile matched",
+                        "  identify  b.pdf: none (...)        nothing matched",
+                        "  identify  c.pdf: ambiguous (...)   more than one matched",
+                        "",
+                        "No database, no evidence, nothing changed.",
                     ),
                 ),
                 Section(
                     "Exit codes",
                     body=(
-                        "0  every PDF matched one profile",
-                        "1  setup mistake, such as no approved profile or no PDFs",
-                        "3  at least one PDF could not be read",
-                        "4  at least one PDF matched no profile, or more than one",
+                        "0  every PDF matched exactly one profile",
+                        "1  a setup problem: no approved profiles, no PDFs, or a bad folder",
+                        "3  at least one PDF couldn't be read",
+                        "4  at least one PDF matched nothing, or matched more than one",
+                        "",
+                        "If both 3 and 4 happen, 3 wins.",
                     ),
                 ),
             ),
             examples=("unpdf-extractor identify C:\\docs",),
             options=(
-                Option("[folder]", "PDF folder; defaults to the current folder"),
-                Option("--no-color", "plain text output"),
+                Option("[folder]", "the folder to look in; defaults to the one you're in"),
+                Option("-h, --help", "show this page"),
+                Option("--no-color", "turn off color"),
             ),
         )
     if name == "pull":
         return Page(
             title="unpdf-extractor pull",
-            summary="Download an approved profile from the private registry and cache it.",
+            summary=(
+                "Downloads an approved profile from the registry and keeps a copy on "
+                "this machine."
+            ),
             usage=("unpdf-extractor pull NAME [--version VERSION]",),
             sections=(
                 Section(
                     "What happens",
                     body=(
-                        "1. Read the registry URL and token.",
-                        "2. Download the profile metadata and JSON.",
-                        "3. Verify the SHA-256 and the profile contract.",
-                        "4. Cache it under the profile cache folder.",
+                        "1. It reads the registry URL and token.",
+                        "2. It downloads the profile's details and its profile.json.",
+                        "3. It checks the SHA-256, the profile name, and that the profile is approved.",
+                        "4. It saves the profile in the local cache.",
                     ),
                 ),
                 Section(
                     "Credentials",
                     body=(
-                        "Environment: UNPDF_REGISTRY_URL and UNPDF_REGISTRY_TOKEN.",
-                        f"Or the file {registry.credentials_path()} with url and token keys.",
-                        "The environment wins, and both values must come from the same place.",
+                        "Set UNPDF_REGISTRY_URL and UNPDF_REGISTRY_TOKEN.",
+                        f"Or put url and token in {registry.credentials_path()}.",
+                        "The environment wins, but both values have to come from the same place.",
+                        "If you set only one, it stops and tells you.",
                     ),
                 ),
             ),
@@ -255,7 +365,8 @@ def command_page(name: str, profiles) -> Page | None:
             options=(
                 Option("NAME", "profile to download, for example invoice"),
                 Option("--version VERSION", "pin a version; defaults to the current one"),
-                Option("--no-color", "plain text output"),
+                Option("-h, --help", "show this page"),
+                Option("--no-color", "turn off color"),
             ),
         )
     if name == "help":
@@ -270,13 +381,26 @@ def command_page(name: str, profiles) -> Page | None:
         )
         return Page(
             title="unpdf-extractor help",
-            summary="Show a command or a concept.",
+            summary="Shows the overview, a command, a profile, or one of the topics.",
             usage=(
-                "unpdf-extractor help          overview",
-                "unpdf-extractor help TOPIC    one topic",
-                "unpdf-extractor help all      every topic",
+                "unpdf-extractor help          the overview",
+                "unpdf-extractor help TOPIC    one page",
+                "unpdf-extractor help all      every page at once",
             ),
-            sections=(Section("Topics", entries=rows),),
+            sections=(
+                Section("Topics", entries=rows),
+                Section(
+                    "",
+                    body=(
+                        "",
+                        "You can also pass a profile name, for example:",
+                        "unpdf-extractor help bayan",
+                        "For a command page, unpdf-extractor COMMAND --help does the same thing.",
+                        "If a topic doesn't exist, it exits 1 and suggests the closest match.",
+                    ),
+                ),
+            ),
+            options=(Option("-h, --help", "show this page"),),
         )
     return None
 
@@ -288,13 +412,17 @@ def topic_page(name: str, profiles) -> Page | None:
     if name == "profiles":
         return Page(
             title="Profiles",
-            summary="A profile describes one document type: its pages, anchors, and field boxes.",
+            summary=(
+                "A profile is a JSON file that describes one document type. It says "
+                "how many pages to expect, which labels prove the type, and where the "
+                "fields are."
+            ),
             sections=(
                 Section(
-                    "Where they are found",
+                    "Where they're found",
                     body=(
                         "1. ./profiles/<name>/profile.json, or $UNPDF_PROFILES/<name>/profile.json",
-                        "2. The registry cache, newest version per name.",
+                        "2. The registry cache, newest version of each name.",
                     ),
                 ),
                 Section(
@@ -304,8 +432,15 @@ def topic_page(name: str, profiles) -> Page | None:
                 Section(
                     "Rules",
                     body=(
-                        "Only approved profiles are accepted; an unapproved one exits with code 4.",
-                        "A profile is data, not code: adding one adds no flag and no branch.",
+                        (
+                            "Only approved profiles are used. Naming an unapproved "
+                            "one with --type or --family stops with code 4; an "
+                            "automatic run just skips it."
+                        ),
+                        (
+                            "A profile is just data. Drop one in and the tool picks "
+                            "it up; there's no new flag or code to add."
+                        ),
                         "The PDFs never leave this machine.",
                     ),
                 ),
@@ -315,31 +450,50 @@ def topic_page(name: str, profiles) -> Page | None:
     if name == "registry":
         return Page(
             title="Profile registry",
-            summary="Approved profiles are downloaded on demand and cached for offline use.",
+            summary=(
+                "The registry is where approved profiles live. The tool downloads one "
+                "when it needs it, then keeps a copy for offline use."
+            ),
             sections=(
                 Section(
                     "Credentials",
                     body=(
-                        "Environment: UNPDF_REGISTRY_URL and UNPDF_REGISTRY_TOKEN.",
-                        f"Or the file {registry.credentials_path()} with url and token keys.",
-                        "The environment wins, and both values must come from the same place.",
-                        "No URL, token, or profile data is stored in this package.",
+                        "Set UNPDF_REGISTRY_URL and UNPDF_REGISTRY_TOKEN.",
+                        f"Or put url and token in {registry.credentials_path()}.",
+                        "The environment wins, but both values have to come from the same place.",
                     ),
                 ),
                 Section(
                     "When the network is used",
                     body=(
-                        "run --type NAME uses a local or cached profile first.",
-                        "An unknown name is downloaded when credentials exist.",
-                        "run --family NAME asks the registry for the member list when credentials exist.",
-                        "Extraction itself never calls the registry.",
+                        (
+                            "run --type NAME checks the local profiles and the cache "
+                            "first. If it doesn't know the name and credentials are "
+                            "set, it downloads it."
+                        ),
+                        (
+                            "run --family NAME asks the registry for the full member "
+                            "list when credentials are set, and downloads any member "
+                            "that isn't cached yet. A family needs at least two "
+                            "approved members."
+                        ),
+                        (
+                            "If the registry call fails and it already has members "
+                            "locally, it uses those."
+                        ),
+                        (
+                            "An automatic run (no --type, no --family) never calls "
+                            "the registry. It only uses the approved profiles already "
+                            "on this machine."
+                        ),
+                        "Once the profile is loaded, extraction is offline.",
                     ),
                 ),
                 Section(
                     "Cache",
                     body=(
                         f"{registry.cache_root()}/<name>/<version>/profile.json",
-                        "Only the current version is kept; pulling another replaces it.",
+                        "Only the current version is kept. Pulling another version replaces it.",
                         "Delete the folder to force a fresh download.",
                     ),
                 ),
@@ -352,30 +506,31 @@ def topic_page(name: str, profiles) -> Page | None:
     if name == "extraction":
         return Page(
             title="How extraction works",
-            summary="The tool reads the PDF; the profile supplies the boxes and the rules.",
+            summary="The tool reads the PDF. The profile tells it where to look and what to check.",
             sections=(
                 Section(
                     "Reading a page",
                     body=(
-                        "A text layer is read as words with coordinates.",
-                        "A scan goes through local Tesseract, Arabic and English.",
-                        "Words are never merged across the page; each field is a box.",
+                        "If the page has a text layer, it reads the words and their coordinates directly.",
+                        "If a page has no usable text, it runs Tesseract locally, in Arabic and English.",
+                        "It never merges words across the page. Each field is its own box.",
+                        "The database records whether the PDF needed OCR on any page, and how confident OCR was about each field.",
                     ),
                 ),
                 Section(
                     "Checking the document",
                     body=(
-                        "Page count, page size, and every required label anchor must match.",
-                        "A document that fails is quarantined, never guessed at.",
+                        "The page count, page size, and every label anchor have to match.",
+                        "If they don't, the PDF is quarantined. The tool doesn't guess.",
                     ),
                 ),
                 Section(
                     "Building a field",
                     body=(
-                        "Words whose centre falls inside the field box are selected.",
-                        "Lines are grouped inside the box, then read right to left for Arabic.",
-                        "The field mode keeps the longest line (line), or joins every line with a space (multi).",
-                        "A field may declare a fallback box, read only when the first box is empty.",
+                        "It takes the words whose centre falls inside the field box.",
+                        "It groups them into lines, then reads right to left for Arabic.",
+                        "line mode keeps the line with the most characters. multi mode joins the lines with a space.",
+                        "A field can have a fallback box, used only when the first box is empty.",
                     ),
                 ),
             ),
@@ -383,14 +538,17 @@ def topic_page(name: str, profiles) -> Page | None:
     if name == "review":
         return Page(
             title="Review queue",
-            summary="A value is stored, but flagged, when the tool cannot trust it.",
+            summary=(
+                "A value can be stored and still be wrong. When the tool can't trust it, "
+                "it keeps the value but flags it."
+            ),
             sections=(
                 Section(
                     "Statuses",
                     body=(
-                        "accepted   present and passed its kind check",
-                        "review     present but failed a check, or a required field is empty",
-                        "missing    absent; optional or genuinely blank",
+                        "accepted  there's a value and it passed its check",
+                        "review    there's a value but it failed a check, or a required field is empty",
+                        "missing   there's no value. That's fine for an optional field; a required one becomes review instead.",
                     ),
                 ),
                 Section(
@@ -409,22 +567,25 @@ def topic_page(name: str, profiles) -> Page | None:
     if name == "contract":
         return Page(
             title="Contract check",
-            summary="Before extraction, the PDF must prove it is the type the profile describes.",
+            summary=(
+                "Before it extracts anything, the tool checks that the PDF really is "
+                "the type the profile describes."
+            ),
             sections=(
                 Section(
                     "Checked",
                     body=(
-                        "page count",
-                        "page size within the profile tolerance",
-                        "every required label anchor inside its box",
+                        "the number of pages",
+                        "the page size, within the profile's tolerance",
+                        "every label anchor, inside its box",
                     ),
                 ),
                 Section(
                     "On a mismatch",
                     body=(
-                        "the PDF is written to the quarantine table with a reason",
-                        "no document or field rows are written",
-                        "the rest of the batch continues",
+                        "the PDF goes into the quarantine table with a reason",
+                        "no document or field rows are written for it",
+                        "the rest of the batch keeps going",
                         "the command exits with code 4",
                     ),
                 ),
@@ -433,21 +594,24 @@ def topic_page(name: str, profiles) -> Page | None:
     if name == "quarantine":
         return Page(
             title="Quarantine",
-            summary="A rejected PDF is kept out of the database but never hidden.",
+            summary=(
+                "A rejected PDF isn't dropped silently. It's kept out of the document "
+                "table, but the reason is recorded."
+            ),
             sections=(
                 Section(
                     "Inspect",
                     body=(
                         "SELECT file, reason, page, details FROM quarantine;",
-                        "The same record is written to .unpdf/quarantine/<pdf-name>.json.",
+                        "The same record is also written to .unpdf/quarantine/<name-without-.pdf>.json.",
                     ),
                 ),
                 Section(
                     "Fix",
                     body=(
-                        "Check that the folder and the selected profile match.",
-                        "If the document is a new type, build and approve a profile for it.",
-                        "If it does not belong, move it out of the folder.",
+                        "Check that the folder and the profile match.",
+                        "If it's a new document type, build and approve a profile for it.",
+                        "If it doesn't belong in this folder, move it out.",
                     ),
                 ),
             ),
@@ -455,22 +619,22 @@ def topic_page(name: str, profiles) -> Page | None:
     if name == "exit-codes":
         return Page(
             title="Exit codes",
-            summary="Use the code when you script the command.",
+            summary="Use these when you script the command.",
             sections=(
                 Section(
                     "Codes",
                     body=(
-                        "0  clean: every field accepted",
-                        "1  nothing to do, or a usage or setup mistake",
-                        "2  review needed: at least one field needs review",
-                        "3  at least one PDF could not be read, or the registry failed",
-                        "4  a PDF was quarantined, the profile is not approved, or identify found no single match",
+                        "0  everything that was found passed; optional blanks are fine",
+                        "1  nothing to do, or a usage or setup problem",
+                        "2  something needs review",
+                        "3  a PDF couldn't be read, or the registry failed",
+                        "4  a PDF was quarantined, a profile isn't approved, or identify found no single match",
                     ),
                 ),
                 Section(
                     "Order",
                     body=(
-                        "3 wins over 4, and 4 wins over 2.",
+                        "3 beats 4, and 4 beats 2.",
                         "Documents that did pass are still saved.",
                     ),
                 ),
@@ -486,6 +650,7 @@ def _profile_page(profile) -> Page:
     rows = [
         Entry("file", str(profile.path)),
         Entry("version", str(data.get("version") or "unknown")),
+        Entry("approved", "yes" if data.get("approved") else "no"),
     ]
     if family:
         rows.append(Entry("family", family))
@@ -498,8 +663,21 @@ def _profile_page(profile) -> Page:
     )
     return Page(
         title=str(data.get("display_name") or profile.name),
-        summary=f"The {profile.name} profile.",
-        sections=(Section("Details", entries=tuple(rows)),),
+        summary=f"What the {profile.name} profile expects from a PDF.",
+        sections=(
+            Section("Details", entries=tuple(rows)),
+            Section(
+                "",
+                body=(
+                    "",
+                    (
+                        "pages is the page count it requires. fields are the boxes "
+                        "it reads. anchors are the labels it looks for to prove the "
+                        "PDF is this type."
+                    ),
+                ),
+            ),
+        ),
         examples=(f"unpdf-extractor run --type {profile.name} .",),
     )
 

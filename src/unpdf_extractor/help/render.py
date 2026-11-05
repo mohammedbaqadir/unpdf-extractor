@@ -116,6 +116,9 @@ def _render(page: Page, style: Style, width: int, version: str) -> str:
         if section.title:
             lines.extend(("", style.bold(section.title)))
         for text in section.body:
+            if not str(text):
+                lines.append("")
+                continue
             for part in str(text).splitlines():
                 lines.extend(_wrap(part, width, subsequent="    ") if part else [""])
         if section.entries:

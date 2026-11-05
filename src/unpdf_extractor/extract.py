@@ -138,6 +138,30 @@ def parse_date(value: str):
     return None
 
 
+def interpret_value(value: str, kind: str) -> tuple[float | None, str | None]:
+    """Return the typed reading of ``value``: (value_num, value_date).
+
+    Never raises. text/digits, and any value that doesn't parse, give
+    (None, None) — the raw text is what gets stored; this is only the
+    interpretation. Dates normalize to ISO 8601 date-only, even when the
+    source format carries a time.
+    """
+    kind = (kind or "text").strip().lower()
+    if kind == "integer":
+        if re.fullmatch(r"\d+", value):
+            return float(int(value)), None
+    elif kind == "number":
+        try:
+            return float(value.replace(",", "")), None
+        except (ValueError, TypeError):
+            pass
+    elif kind == "date":
+        parsed = parse_date(value)
+        if parsed is not None:
+            return None, parsed.date().isoformat()
+    return None, None
+
+
 def check_value(value: str, kind: str) -> str | None:
     """Return why ``value`` does not match ``kind``, or None when it does."""
     kind = (kind or "text").strip().lower()
@@ -176,6 +200,7 @@ class FieldValue:
     box: tuple[float, float, float, float]
     method: str = "text"
     confidence: float | None = None
+    kind: str = "text"
 
 
 def words_in_box(
@@ -280,6 +305,7 @@ def extract_fields(
                 box=(box.left, box.top, box.right, box.bottom),
                 method=method,
                 confidence=confidence,
+                kind=field.kind,
             )
             break
     return result

@@ -156,6 +156,8 @@ def run(
     runner = _Run(job, work_root, sqlite3.connect(db_path), Summary(skipped=len(skipped)))
     try:
         pipeline.ensure_schema(runner.conn)
+        pipeline.backfill_typed_columns(runner.conn, job.contracts)
+        pipeline.ensure_views(runner.conn, job.contracts)
         _record_contracts(runner.conn, job)
         seen: set[str] = set()
         for pdf, digest in fresh:
@@ -186,6 +188,7 @@ def check(
     conn = sqlite3.connect(db_path)
     try:
         pipeline.ensure_schema(conn)
+        pipeline.backfill_typed_columns(conn, job.contracts)
         for name, contract in job.contracts.items():
             _warn_if_changed(conn, name, contract)
             doc_ids = [
@@ -196,6 +199,7 @@ def check(
                 pipeline.validate_document(
                     conn, name, contract, doc_id, pipeline.stored_values(conn, doc_id)
                 )
+        pipeline.ensure_views(conn, job.contracts)
         conn.commit()
         summary = Summary()
         _fill_counts(conn, job, summary)
@@ -410,6 +414,9 @@ def _database_state(job: Job, db_path: Path) -> Summary:
     conn = sqlite3.connect(db_path)
     try:
         pipeline.ensure_schema(conn)
+        pipeline.backfill_typed_columns(conn, job.contracts)
+        pipeline.ensure_views(conn, job.contracts)
+        conn.commit()
         summary = Summary()
         _fill_counts(conn, job, summary)
         return summary

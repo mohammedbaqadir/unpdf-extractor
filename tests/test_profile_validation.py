@@ -116,9 +116,64 @@ class ProfileValidationTests(unittest.TestCase):
                 self.assertIn(allowed, message)
 
     def test_unknown_keys_are_ignored(self):
+        # Load-time leniency: old approved profiles with telemetry still run.
+        # approve is the strict gate that rejects these keys.
         data = profile_data()
         data["regions"] = [{"id": "panel", "page": 1, "box": [0.0, 0.0, 0.5, 0.5]}]
         data["fields"][0]["label"] = "Number"
+        LayoutProfile.from_dict(data)
+
+    def test_older_schema_version_is_accepted(self):
+        data = profile_data()
+        data["schema_version"] = 2
+        LayoutProfile.from_dict(data)
+
+    def test_newer_schema_version_is_rejected(self):
+        data = profile_data()
+        data["schema_version"] = 4
+        with self.assertRaises(UnpdfError) as raised:
+            LayoutProfile.from_dict(data)
+        self.assertEqual(raised.exception.exit_code, 3)
+        self.assertIn("newer extractor", str(raised.exception))
+
+    def test_field_names_must_be_snake_case(self):
+        for name in ("Total", "bad-name", "1st", ""):
+            with self.subTest(name=name):
+                self.assert_invalid(
+                    lambda data, name=name: data["fields"][0].update(name=name)
+                )
+
+    def test_reserved_field_names_are_rejected(self):
+        for name in ("doc_id", "file", "format", "added_at"):
+            with self.subTest(name=name):
+                self.assert_invalid(
+                    lambda data, name=name: data["fields"][0].update(name=name)
+                )
+
+    def test_required_must_be_bool(self):
+        self.assert_invalid(
+            lambda data: data["fields"][0].update(required="false")
+        )
+
+    def test_family_must_be_lowercase(self):
+        self.assert_invalid(lambda data: data.update(family="Fasah"))
+
+    def test_match_field_must_be_declared(self):
+        self.assert_invalid(
+            lambda data: data.update(
+                match={"field": "nope", "contains_any": ["x"]}
+            )
+        )
+
+    def test_match_needs_contains_any(self):
+        self.assert_invalid(
+            lambda data: data.update(match={"field": "number", "contains_any": []})
+        )
+
+    def test_valid_family_and_match_are_accepted(self):
+        data = profile_data()
+        data["family"] = "test-family"
+        data["match"] = {"field": "number", "contains_any": ["INV"]}
         LayoutProfile.from_dict(data)
 
     def test_collection_limits(self):

@@ -91,9 +91,17 @@ Both are created next to the database, which defaults to the PDF folder. Use `--
 The database has:
 
 - `docs`: one row per document.
-- `extracted_fields`: one row per field.
+- `extracted_fields`: one row per field — raw `value` plus `kind`, `value_num` (numbers), and `value_date` (ISO dates).
+- `_field_status`: the status of every field on every document.
 - `quarantine`: the PDFs that were rejected.
 - `review`: a view of every flagged field.
+- `profile_<name>`: one view per profile — one row per document, one column per field, typed by kind. Rebuilt on every `run` and `check`.
+
+```sql
+SELECT file, reference, total, issue_date FROM profile_invoice WHERE total > 1000;
+```
+
+The database format version is `PRAGMA user_version` (5). Older databases are migrated automatically; a database created by a newer extractor is refused.
 
 ## Profiles
 
@@ -106,6 +114,8 @@ profiles/<name>/profile.json
 That path is relative to the current folder, unless `UNPDF_PROFILES` points somewhere else. Profiles downloaded from the registry are cached, so they don't need a local folder.
 
 Only approved profiles work. An unapproved one exits with code 4.
+
+Field names must be lowercase snake_case (`^[a-z][a-z0-9_]*$`) and can't be `doc_id`, `file`, `format`, or `added_at` — they become view columns. The extractor accepts profile `schema_version` up to 3 and migrates older files in memory; a newer version needs a newer extractor. Unknown keys are ignored when loading an older profile but rejected when a profile is approved.
 
 ### Fallback boxes
 
@@ -169,6 +179,8 @@ review     present but failed a check, or a required field is empty
 missing    absent: optional, or genuinely blank
 ```
 
+`value_num` holds the numeric reading of `number`/`integer` fields and `value_date` the ISO date of `date` fields; both are NULL for text/digits and for values that failed their check. The raw value is always kept in `value`.
+
 If a PDF fails the contract check, it's quarantined with a reason, and the rest of the batch keeps going.
 
 Each run ends with a summary:
@@ -207,6 +219,9 @@ If more than one applies, 3 wins over 4, and 4 wins over 2. Documents that passe
 | `Family 'x' has N approved profile(s)...` | 1 | Pull the missing members |
 | `Duplicate PDF file names in ...` | 1 | Rename the files. Nothing was read |
 | `Profile 'x' is not approved.` | 4 | Approve it, or pick a different profile |
+| `This database was created by a newer extractor…` | 3 | Update the extractor |
+| `Profile schema version … needs a newer extractor` | 3 | Update the extractor |
+| `Profile field '<name>' …` (bad name or reserved) | 3 | Fix the field name and re-approve |
 | `quarantine <file>: expected N page(s), found M` | 4 | The folder and the profile disagree about the form |
 | `quarantine <file>: no profile subtype matched` | 4 | No profile describes this document |
 | `quarantine <file>: matched more than one profile` | 4 | Tighten a match rule |
